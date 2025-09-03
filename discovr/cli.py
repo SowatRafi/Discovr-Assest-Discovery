@@ -56,6 +56,7 @@ def main():
 
     print(f"[+] Logs saved at logs/discovr_log_{timestamp}.log")
 
+    # 🔹 Consistent Save Prompt for Network + Cloud
     if assets:
         choice = input("\nDo you want to save results? (yes/no): ").strip().lower()
         if choice in ["yes", "y"]:
