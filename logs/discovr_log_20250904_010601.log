@@ -1,0 +1,6 @@
+2025-09-04 01:06:01,004 [INFO] Discovr started. Logs at logs\discovr_log_20250904_010601.log
+2025-09-04 01:06:01,004 [INFO] [+] Running network scan on 192.168.75.0/24
+2025-09-04 01:06:46,592 [INFO]     [+] Network Host: 192.168.75.2 (Unknown) | OS: Microsoft Windows 10 1607 - 11 23H2 | Ports: 135,139,445,3389
+2025-09-04 01:06:46,592 [INFO] [+] 1 assets discovered.
+2025-09-04 01:06:46,592 [INFO] [+] Logs saved at logs\discovr_log_20250904_010601.log
+2025-09-04 01:09:06,372 [INFO] [+] Results not saved.
