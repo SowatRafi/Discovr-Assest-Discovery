@@ -1,7 +1,7 @@
 # Discovr - Asset Discovery Tool
 
-Discovr is a lightweight asset discovery tool for **network and cloud environments**.  
-It can actively scan networks, detect hosts, guess operating systems, list open ports, and discover assets in AWS and Azure.  
+Discovr is a lightweight asset discovery tool for **network, cloud, and Active Directory environments**.  
+It can actively scan networks, detect hosts, guess operating systems, list open ports, discover assets in AWS and Azure, and query Active Directory for computer objects.  
 Results can be exported to CSV/JSON and logs are automatically created.  
 
 ---
@@ -15,13 +15,17 @@ Results can be exported to CSV/JSON and logs are automatically created.
   - AWS EC2 instance discovery (via boto3)
   - Azure VM discovery (via azure-identity + azure-mgmt)
   - Same save/export flow as Network Discovery (CSV/JSON prompt after run)
+- **Active Directory Discovery**
+  - Queries AD for computer objects
+  - Collects Hostname, OS, and resolves IP if possible
+  - Test module for simulating AD assets without a domain
 - **General**
   - Live discovery output per host/instance
   - Final summary in a tabular report
   - Logging of results and errors
   - Export to CSV and JSON (saved into `csv_report/` and `json_report/` folders)
 - **Tests**
-  - Test modules included for simulating multiple assets without running real scans
+  - Test modules included for simulating assets without running real scans
 
 ---
 
@@ -42,34 +46,16 @@ python -m discovr.cli [OPTIONS]
 | `--profile` | AWS profile name (default: `default`) | `--cloud aws --profile myprofile` |
 | `--region` | AWS region (default: `us-east-1`) | `--cloud aws --region us-west-2` |
 | `--subscription` | Azure subscription ID | `--cloud azure --subscription <sub-id>` |
+| `--ad` | Run Active Directory discovery | `--ad --domain mydomain.local --username admin@mydomain.local --password "Secret123"` |
+| `--domain` | AD domain name | `--domain mydomain.local` |
+| `--username` | AD username | `--username admin@mydomain.local` |
+| `--password` | AD password | `--password Secret123` |
 
 ---
 
-## 🔹 Example Runs
+## 🔹 Example Outputs
 
-### Network Discovery (Full subnet scan with OS detection)
-```bash
-python -m discovr.cli --scan-network 192.168.1.0/24
-```
-
-### Network Discovery (Targeted scan with specific ports)
-```bash
-python -m discovr.cli --scan-network 192.168.1.0/24 --ports 22,80,443
-```
-
-### AWS Cloud Discovery
-```bash
-python -m discovr.cli --cloud aws --profile default --region us-east-1
-```
-
-### Azure Cloud Discovery
-```bash
-python -m discovr.cli --cloud azure --subscription 12345678-abcd-1234-efgh-9876543210ab
-```
-
----
-
-## 🔹 Example Output (Network Scan)
+### Network Discovery (Real Run)
 
 ```text
 [+] Scanning network: 192.168.1.0/24
@@ -101,7 +87,7 @@ Choose format (csv/json/both): both
 
 ---
 
-## 🔹 Example Output (AWS Cloud Discovery)
+### AWS Cloud Discovery (Real Run)
 
 ```text
 [+] Discovering AWS assets...
@@ -128,7 +114,7 @@ Choose format (csv/json/both): both
 
 ---
 
-## 🔹 Example Output (Azure Cloud Discovery)
+### Azure Cloud Discovery (Real Run)
 
 ```text
 [+] Discovering AZURE assets...
@@ -154,21 +140,70 @@ Choose format (csv/json/both): json
 
 ---
 
-## 🔹 Test Modules
+### Active Directory Discovery (Real Run)
 
-Test modules are provided to simulate assets without real scans.
+```text
+[+] Discovering Active Directory assets in mydomain.local
+    [+] AD Computer: 192.168.1.25 (HR-PC01.mydomain.local) | OS: Windows 10 Pro
+    [+] AD Computer: 192.168.1.30 (DB-SERVER01.mydomain.local) | OS: Windows Server 2019
+
+Discovered Assets (final report):
++--------------+-----------------------------+--------------------+-------+
+| IP           | Hostname                    | OS                 | Ports |
++--------------+-----------------------------+--------------------+-------+
+| 192.168.1.25 | HR-PC01.mydomain.local      | Windows 10 Pro     | N/A   |
+| 192.168.1.30 | DB-SERVER01.mydomain.local  | Windows Server 2019| N/A   |
++--------------+-----------------------------+--------------------+-------+
+
+[+] 2 Active Directory assets discovered.
+[+] Total execution time: 5.12 seconds
+[+] Logs saved at logs/discovr_log_20250904_140245.log
+
+Do you want to save results? (yes/no): yes
+Choose format (csv/json/both): both
+[+] CSV saved: csv_report/discovr_csv_20250904_140245.csv
+[+] JSON saved: json_report/discovr_json_20250904_140245.json
+```
+
+---
+
+## 🔹 Example Test Outputs
 
 ### Network Discovery Test
 ```bash
 python -m tests.test_network
 ```
 
+**Output:**
+```text
+[+] Scanning network: 192.168.1.0/24
+[+] Running OS detection scan (requires admin privileges)
+[+] 256 hosts scanned, processing results...
+
+    [+] Found: 192.168.1.1 (router) | OS: Linux/Unix (guessed) | Ports: 80,443
+    [+] Found: 192.168.1.10 (laptop01) | OS: Windows 10 Pro | Ports: 135,445
+    [+] Found: 192.168.1.20 (server01) | OS: Linux 5.x kernel | Ports: 22,80,443
+
+Discovered Assets (final report):
++---------------+-----------+-------------------+-----------+
+| IP            | Hostname  | OS                | Ports     |
++---------------+-----------+-------------------+-----------+
+| 192.168.1.1   | router    | Linux/Unix        | 80,443    |
+| 192.168.1.10  | laptop01  | Windows 10 Pro    | 135,445   |
+| 192.168.1.20  | server01  | Linux 5.x kernel  | 22,80,443 |
++---------------+-----------+-------------------+-----------+
+
+[+] 3 active assets discovered out of 256 scanned hosts.
+```
+
+---
+
 ### Cloud Discovery Test
 ```bash
 python -m tests.test_cloud
 ```
 
-### Example Test Output (Cloud)
+**Output:**
 ```text
 [+] Running Cloud Discovery Tests
     [+] Simulated AWS VM: 54.12.34.56 (aws-web01) | OS: Amazon Linux
@@ -185,4 +220,30 @@ Discovered Assets (final report):
 | 20.50.30.10 | azure-app01  | Ubuntu 20.04        | N/A   |
 | 10.0.0.5    | azure-sql01  | Windows Server 2022 | N/A   |
 +-------------+--------------+---------------------+-------+
+```
+
+---
+
+### Active Directory Discovery Test
+```bash
+python -m tests.test_active_directory
+```
+
+**Output:**
+```text
+[+] Running Active Directory Discovery Test (Simulated)
+    [+] Simulated AD Computer: 192.168.1.25 (HR-PC01.mydomain.local) | OS: Windows 10 Pro
+    [+] Simulated AD Computer: 192.168.1.30 (DB-SERVER01.mydomain.local) | OS: Windows Server 2019
+    [+] Simulated AD Computer: 192.168.1.40 (DEV-LAPTOP.mydomain.local) | OS: Windows 11 Pro
+
+Discovered Assets (final report):
++--------------+-----------------------------+--------------------+-------+
+| IP           | Hostname                    | OS                 | Ports |
++--------------+-----------------------------+--------------------+-------+
+| 192.168.1.25 | HR-PC01.mydomain.local      | Windows 10 Pro     | N/A   |
+| 192.168.1.30 | DB-SERVER01.mydomain.local  | Windows Server 2019| N/A   |
+| 192.168.1.40 | DEV-LAPTOP.mydomain.local   | Windows 11 Pro     | N/A   |
++--------------+-----------------------------+--------------------+-------+
+
+[+] 3 Active Directory assets discovered.
 ```
