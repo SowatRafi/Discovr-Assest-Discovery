@@ -4,6 +4,7 @@ from datetime import datetime
 import csv
 import json
 from tabulate import tabulate
+from discovr.tagger import Tagger
 
 
 class Logger:
@@ -18,7 +19,7 @@ class Logger:
             filename=log_file,
             level=logging.INFO,
             format="%(asctime)s [%(levelname)s] %(message)s",
-            force=True,  # reset handlers
+            force=True,
         )
         console = logging.StreamHandler()
         console.setLevel(logging.INFO)
@@ -39,7 +40,7 @@ class Exporter:
         if "csv" in formats:
             csv_file = os.path.join("csv_report", f"discovr_{feature}_{timestamp}.csv")
             with open(csv_file, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=["IP", "Hostname", "OS", "Ports"])
+                writer = csv.DictWriter(f, fieldnames=["IP", "Hostname", "OS", "Ports", "Tag"])
                 writer.writeheader()
                 writer.writerows(assets)
             print(f"[+] CSV saved: {csv_file}")
@@ -56,9 +57,11 @@ class Reporter:
     def print_results(assets, total_hosts, context="assets"):
         """Print results in tabular form with summary (for active scans)"""
         if assets:
-            table = [[a["IP"], a["Hostname"], a["OS"], a["Ports"]] for a in assets]
+            # Tag assets before printing
+            tagged_assets = Tagger.tag_assets(assets)
+            table = [[a["IP"], a["Hostname"], a["OS"], a["Ports"], a["Tag"]] for a in tagged_assets]
             print("\nDiscovered Assets (final report):")
-            print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports"], tablefmt="grid"))
-            print(f"\n[+] {len(assets)} {context} discovered out of {total_hosts} scanned hosts.")
+            print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports", "Tag"], tablefmt="grid"))
+            print(f"\n[+] {len(tagged_assets)} {context} discovered out of {total_hosts} scanned hosts.")
         else:
             print("\n[!] No assets discovered.")
