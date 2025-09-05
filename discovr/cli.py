@@ -14,6 +14,7 @@ from discovr.cloud import CloudDiscovery
 from discovr.active_directory import ADDiscovery
 from discovr.passive import PassiveDiscovery
 from discovr.tagger import Tagger
+from discovr.risk import RiskAssessor
 from tabulate import tabulate
 
 # For autoipaddr
@@ -139,10 +140,11 @@ def main():
 
             if assets:
                 tagged_assets = Tagger.tag_assets(assets)
-                table = [[a["IP"], a["Hostname"], a["OS"], a["Ports"], a["Tag"]] for a in tagged_assets]
+                risked_assets = RiskAssessor.add_risks(tagged_assets)
+                table = [[a["IP"], a["Hostname"], a["OS"], a["Ports"], a["Tag"], a["Risk"]] for a in risked_assets]
                 print("\nDiscovered Assets (final report):")
-                print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports", "Tag"], tablefmt="grid"))
-                print(f"\n[+] {len(tagged_assets)} assets discovered during passive monitoring.")
+                print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports", "Tag", "Risk"], tablefmt="grid"))
+                print(f"\n[+] {len(risked_assets)} assets discovered during passive monitoring.")
             else:
                 print("\n[!] No assets discovered during passive monitoring.")
 
