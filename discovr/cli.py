@@ -22,6 +22,8 @@ def main():
     # Network
     parser.add_argument("--scan-network", help="Network range, e.g. 192.168.1.0/24")
     parser.add_argument("--ports", help="Ports to scan, e.g. 22,80,443")
+    parser.add_argument("--parallel", type=int, default=1,
+                        help="Number of parallel workers for network scan (default: 1)")
 
     # Cloud
     parser.add_argument("--cloud", choices=["aws", "azure"], help="Cloud provider to scan")
@@ -53,8 +55,10 @@ def main():
         if args.scan_network:
             feature = "network"
             log_file, timestamp = Logger.setup(feature)
-            scanner = NetworkDiscovery(args.scan_network, args.ports)
-            assets, total_hosts, elapsed_time = scanner.run()
+            start_time = time.time()
+            scanner = NetworkDiscovery(args.scan_network, args.ports, args.parallel)
+            assets, total_hosts, _ = scanner.run()
+            elapsed_time = time.time() - start_time
             Reporter.print_results(assets, total_hosts, "active assets")
 
         # Cloud Discovery
