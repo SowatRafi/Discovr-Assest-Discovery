@@ -85,6 +85,10 @@ Output:
     [+] Found: 192.168.1.1 (router) | OS: Linux/Unix (guessed) | Ports: 80,443
     [+] Found: 192.168.1.10 (laptop01) | OS: Windows 10 Pro | Ports: 135,445
     [+] Found: 192.168.1.20 (server01) | OS: Linux 5.x kernel | Ports: 22,80,443
+    [+] Found: 192.168.1.50 (laptop01) | OS: Android 12 | Ports: None
+    [+] Found: 192.168.1.51 (server01) | OS: iOS 16.3 | Ports: None
+    [+] Found: 192.168.1.70 (server01) | OS: iPadOS | Ports: None
+    
 
 Discovered Assets (final report):
 +---------------+-----------+-------------------+-----------+--------------+
@@ -93,9 +97,12 @@ Discovered Assets (final report):
 | 192.168.1.1   | router    | Linux/Unix        | 80,443    | [Network]    |
 | 192.168.1.10  | laptop01  | Windows 10 Pro    | 135,445   | [Workstation]|
 | 192.168.1.20  | server01  | Linux 5.x kernel  | 22,80,443 | [Server]     |
+| 192.168.1.50  | samsung-galaxy | Android 12   | None      | [Mobile]     |
+| 192.168.1.51  | johns-iphone   | iOS 16.3     | None      | [Mobile]     |
+| 192.168.1.70  | Sarahs-iPad    | iPadOS       | None       | [Tablet]    |
 +---------------+-----------+-------------------+-----------+--------------+
 
-[+] 3 active assets discovered out of 256 scanned hosts.
+[+] 5 active assets discovered out of 256 scanned hosts.
 [+] Total execution time: 5.23 seconds (parallel scan)
 [+] Logs saved at logs/discovr_network_log_20250905_180100.log
 ```

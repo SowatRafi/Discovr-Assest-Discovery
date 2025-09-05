@@ -9,18 +9,29 @@ class Tagger:
         # Workstations
         if "windows 10" in os_name or "windows 11" in os_name:
             return "[Workstation]"
+
         # Servers
         if "server" in os_name or "linux" in os_name:
             return "[Server]"
+
         # Printers
         if "printer" in hostname:
             return "[Printer]"
+
         # IoT
         if "camera" in hostname or "iot" in hostname or "chromecast" in hostname:
             return "[IoT]"
+
+        # Mobile Phones
+        if any(word in os_name for word in ["android", "ios", "iphone", "ipad"]):
+            return "[Mobile]"
+        if any(word in hostname for word in ["iphone", "ipad", "android", "samsung", "oneplus", "pixel"]):
+            return "[Mobile]"
+
         # Network Devices
         if "router" in hostname or "switch" in hostname or "firewall" in hostname:
             return "[Network]"
+
         # Web hosts
         if "80" in ports or "443" in ports:
             return "[WebHost]"
