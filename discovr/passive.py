@@ -2,25 +2,62 @@ import logging
 import platform
 from scapy.all import sniff, ARP, DNS, DNSQR, BOOTP, DHCP, UDP, get_if_list
 
+# Windows-only helper for friendly names
+try:
+    from scapy.arch.windows import get_windows_if_list
+except ImportError:
+    get_windows_if_list = None
+
+
 class PassiveDiscovery:
-    def __init__(self, iface=None, count=0):
+    def __init__(self, iface=None, count=0, timeout=180):
         """
         :param iface: Network interface
-                       - Linux/Mac: 'eth0', 'wlan0', 'en0'
-                       - Windows: raw GUID like '{782C6688-...}'
-        :param count: Number of packets to capture (0 = unlimited until Ctrl+C)
+            - Linux/Mac: 'eth0', 'wlan0', 'en0'
+            - Windows: friendly name (e.g., 'Wi-Fi', 'Ethernet')
+        :param count: Number of packets to capture (0 = unlimited until timeout/Ctrl+C)
+        :param timeout: Duration in seconds (default: 180 = 3 minutes)
         """
         self.iface = iface
         self.count = count
+        self.timeout = timeout
         self.assets = {}
 
-    def _normalize_iface(self, iface):
-        """Normalize interface name for Windows GUIDs and keep Linux/Mac unchanged."""
-        if platform.system() == "Windows":
-            if iface and iface.startswith("{") and iface.endswith("}"):
-                # Correct: keep braces in Npcap path
-                return f"\\\\Device\\\\NPF_{iface}"
-        return iface
+    def _list_interfaces(self):
+        """Return list of interfaces cross-platform."""
+        if platform.system() == "Windows" and get_windows_if_list:
+            return get_windows_if_list()
+        else:
+            return get_if_list()
+
+    def _select_iface(self):
+        """Interactive interface selection if none is provided."""
+        ifaces = self._list_interfaces()
+        print("[+] Available interfaces:")
+
+        if platform.system() == "Windows" and get_windows_if_list:
+            for idx, iface in enumerate(ifaces, start=1):
+                print(f"    [{idx}] {iface['name']} ({iface['description']})")
+            choice = input("\nSelect interface by number: ").strip()
+            try:
+                idx = int(choice)
+                if 1 <= idx <= len(ifaces):
+                    return ifaces[idx - 1]["name"]
+            except ValueError:
+                pass
+        else:
+            for idx, iface in enumerate(ifaces, start=1):
+                print(f"    [{idx}] {iface}")
+            choice = input("\nSelect interface by number: ").strip()
+            try:
+                idx = int(choice)
+                if 1 <= idx <= len(ifaces):
+                    return ifaces[idx - 1]
+            except ValueError:
+                pass
+
+        print("[!] Invalid choice.")
+        return None
 
     def _process_packet(self, packet):
         ip, hostname = None, None
@@ -37,9 +74,9 @@ class PassiveDiscovery:
         # DHCP traffic (devices asking for IPs)
         elif packet.haslayer(BOOTP) and packet.haslayer(DHCP):
             ip = packet[BOOTP].yiaddr if packet[BOOTP].yiaddr != "0.0.0.0" else None
-            hostname = f"DHCP-{packet[BOOTP].chaddr.hex()}"  # client MAC
+            hostname = f"DHCP-{packet[BOOTP].chaddr.hex()}"
 
-        # mDNS traffic (multicast DNS — often IoT devices)
+        # mDNS traffic (multicast DNS — IoT, printers, smart TVs)
         elif packet.haslayer(UDP) and packet[UDP].dport == 5353 and packet.haslayer(DNSQR):
             hostname = packet[DNSQR].qname.decode("utf-8") if packet[DNSQR].qname else "mDNS-device"
 
@@ -56,50 +93,23 @@ class PassiveDiscovery:
                     f"    [+] Passive Discovery Found: {self.assets[key]['IP']} ({self.assets[key]['Hostname']})"
                 )
 
-    def _select_iface(self):
-        """Interactive interface selection if none is provided"""
-        available_ifaces = get_if_list()
-        print("[+] Available interfaces:")
-        for idx, iface in enumerate(available_ifaces, start=1):
-            print(f"    [{idx}] {iface}")
-
-        choice = input("\nSelect interface by number: ").strip()
-        try:
-            idx = int(choice)
-            if 1 <= idx <= len(available_ifaces):
-                return available_ifaces[idx - 1]
-        except ValueError:
-            pass
-
-        print("[!] Invalid choice.")
-        return None
-
     def run(self):
         if not self.iface:
             self.iface = self._select_iface()
             if not self.iface:
                 return [], 0
 
-        normalized_iface = self._normalize_iface(self.iface)
-        available_ifaces = get_if_list()
-
-        # Add expanded versions for Windows (Npcap device paths with braces)
-        if platform.system() == "Windows":
-            expanded = []
-            for i in available_ifaces:
-                if i.startswith("{") and i.endswith("}"):
-                    expanded.append(f"\\\\Device\\\\NPF_{i}")
-            available_ifaces.extend(expanded)
-
-        if normalized_iface not in available_ifaces:
-            print(f"[!] Invalid interface: {self.iface}")
-            return [], 0
-
-        print(f"[+] Starting passive discovery on interface: {normalized_iface}")
-        print("[+] Listening for ARP, DNS, DHCP, and mDNS traffic (Ctrl+C to stop)...\n")
+        print(f"[+] Starting passive discovery on interface: {self.iface}")
+        print(f"[+] Listening for ARP, DNS, DHCP, and mDNS traffic (auto-stop after {self.timeout} seconds or Ctrl+C)...\n")
 
         try:
-            sniff(prn=self._process_packet, iface=normalized_iface, count=self.count, store=0)
+            sniff(
+                prn=self._process_packet,
+                iface=self.iface,
+                count=self.count,
+                timeout=self.timeout,
+                store=0
+            )
         except KeyboardInterrupt:
             print("\n[+] Stopping passive discovery...")
 
