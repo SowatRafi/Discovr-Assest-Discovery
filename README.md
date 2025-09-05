@@ -12,6 +12,7 @@ Results can be exported to CSV/JSON and logs are automatically created.
 |----------|-------------|---------|
 | `--scan-network` | Network range in CIDR or single host | `--scan-network 192.168.1.0/24` |
 | `--ports` | Comma-separated list of ports to scan | `--ports 22,80,443` |
+| `--parallel` | Number of parallel workers for network scan (default: 1). Recommended: 5–20 for most subnets. | `--parallel 10` |
 | `--cloud` | Cloud provider (`aws` or `azure`) | `--cloud aws` |
 | `--profile` | AWS profile name (default: `default`) | `--cloud aws --profile myprofile` |
 | `--region` | AWS region (default: `us-east-1`) | `--cloud aws --region us-west-2` |
@@ -48,6 +49,34 @@ Discovered Assets (final report):
 
 [+] 3 active assets discovered out of 256 scanned hosts.
 [+] Logs saved at logs/discovr_network_log_20250905_173000.log
+```
+#### Real Run (Parallel with 10 workers)
+Command:
+```bash
+python -m discovr.cli --scan-network 192.168.1.0/24 --parallel 10
+```
+Output:
+```text
+[+] Scanning network: 192.168.1.0/24 with 10 parallel workers
+[+] Running OS detection scan (requires admin privileges)
+[+] 256 hosts scanned across 10 workers, processing results...
+
+    [+] Found: 192.168.1.1 (router) | OS: Linux/Unix (guessed) | Ports: 80,443
+    [+] Found: 192.168.1.10 (laptop01) | OS: Windows 10 Pro | Ports: 135,445
+    [+] Found: 192.168.1.20 (server01) | OS: Linux 5.x kernel | Ports: 22,80,443
+
+Discovered Assets (final report):
++---------------+-----------+-------------------+-----------+--------------+
+| IP            | Hostname  | OS                | Ports     | Tag          |
++---------------+-----------+-------------------+-----------+--------------+
+| 192.168.1.1   | router    | Linux/Unix        | 80,443    | [Network]    |
+| 192.168.1.10  | laptop01  | Windows 10 Pro    | 135,445   | [Workstation]|
+| 192.168.1.20  | server01  | Linux 5.x kernel  | 22,80,443 | [Server]     |
++---------------+-----------+-------------------+-----------+--------------+
+
+[+] 3 active assets discovered out of 256 scanned hosts.
+[+] Total execution time: 5.23 seconds (parallel scan)
+[+] Logs saved at logs/discovr_network_log_20250905_180100.log
 ```
 
 #### Test Run
