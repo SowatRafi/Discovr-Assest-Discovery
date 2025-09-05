@@ -11,6 +11,7 @@ Results can be exported to CSV/JSON and logs are automatically created.
 | Argument | Description | Example |
 |----------|-------------|---------|
 | `--scan-network` | Network range in CIDR or single host | `--scan-network 192.168.1.0/24` |
+| `--autoipaddr` | Auto-detect local IP and subnet for scanning | `--autoipaddr` |
 | `--ports` | Comma-separated list of ports to scan | `--ports 22,80,443` |
 | `--parallel` | Number of parallel workers for network scan (default: 1). Recommended: 5–20 for most subnets. | `--parallel 10` |
 | `--cloud` | Cloud provider (`aws` or `azure`) | `--cloud aws` |
@@ -50,10 +51,30 @@ Discovered Assets (final report):
 [+] 3 active assets discovered out of 256 scanned hosts.
 [+] Logs saved at logs/discovr_network_log_20250905_173000.log
 ```
+#### Real Run (Auto-detect local subnet)
+Command:
+```bash
+python -m discovr.cli --autoipaddr
+```
+Output:
+```text
+Discovered Assets (final report):
++---------------+-----------+-------------------+-----------+--------------+
+| IP            | Hostname  | OS                | Ports     | Tag          |
++---------------+-----------+-------------------+-----------+--------------+
+| 192.168.1.1   | router    | Linux/Unix        | 80,443    | [Network]    |
+| 192.168.1.10  | laptop01  | Windows 10 Pro    | 135,445   | [Workstation]|
+| 192.168.1.20  | server01  | Linux 5.x kernel  | 22,80,443 | [Server]     |
++---------------+-----------+-------------------+-----------+--------------+
+
+[+] 3 active assets discovered out of 256 scanned hosts.
+[+] Logs saved at logs/discovr_network_log_20250905_173000.log
+```
 #### Real Run (Parallel with 10 workers)
 Command:
 ```bash
 python -m discovr.cli --scan-network 192.168.1.0/24 --parallel 10
+python -m discovr.cli --autoipaddr --parallel 10
 ```
 Output:
 ```text
