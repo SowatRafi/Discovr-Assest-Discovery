@@ -12,6 +12,7 @@ from discovr.network import NetworkDiscovery
 from discovr.cloud import CloudDiscovery
 from discovr.active_directory import ADDiscovery
 from discovr.passive import PassiveDiscovery
+from tabulate import tabulate
 
 
 def main():
@@ -39,22 +40,26 @@ def main():
     parser.add_argument("--timeout", type=int, default=180, help="Passive discovery timeout in seconds (default: 180)")
 
     args = parser.parse_args()
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    Logger.setup()
 
     assets = []
     total_hosts = 0
     elapsed_time = 0
+    feature = None
+    timestamp = None
 
     try:
         # Network Discovery
         if args.scan_network:
+            feature = "network"
+            log_file, timestamp = Logger.setup(feature)
             scanner = NetworkDiscovery(args.scan_network, args.ports)
             assets, total_hosts, elapsed_time = scanner.run()
             Reporter.print_results(assets, total_hosts)
 
         # Cloud Discovery
         elif args.cloud:
+            feature = "cloud"
+            log_file, timestamp = Logger.setup(feature)
             cloud_scanner = CloudDiscovery(
                 provider=args.cloud,
                 profile=args.profile,
@@ -69,6 +74,8 @@ def main():
 
         # Active Directory Discovery
         elif args.ad:
+            feature = "ad"
+            log_file, timestamp = Logger.setup(feature)
             if not args.domain or not args.username or not args.password:
                 print("[!] AD discovery requires --domain, --username, and --password")
                 sys.exit(1)
@@ -81,14 +88,14 @@ def main():
 
         # Passive Discovery
         elif args.passive:
+            feature = "passive"
+            log_file, timestamp = Logger.setup(feature)
             print("[+] Running passive discovery")
             scanner = PassiveDiscovery(iface=args.iface, timeout=args.timeout)
             assets, total_assets = scanner.run()
             elapsed_time = args.timeout
 
-            # Print passive results in the same table format
             if assets:
-                from tabulate import tabulate
                 table = [[a["IP"], a["Hostname"], a["OS"], a["Ports"]] for a in assets]
                 print("\nDiscovered Assets (final report):")
                 print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports"], tablefmt="grid"))
@@ -107,7 +114,8 @@ def main():
     if elapsed_time:
         print(f"[+] Total execution time: {elapsed_time:.2f} seconds")
 
-    print(f"[+] Logs saved at logs/discovr_log_{timestamp}.log")
+    if feature and timestamp:
+        print(f"[+] Logs saved at logs/discovr_{feature}_log_{timestamp}.log")
 
     # Export prompt (common across all modules)
     if assets:
@@ -115,11 +123,11 @@ def main():
         if choice in ["yes", "y"]:
             format_choice = input("Choose format (csv/json/both): ").strip().lower()
             if format_choice == "csv":
-                Exporter.save_results(assets, ["csv"], timestamp)
+                Exporter.save_results(assets, ["csv"], feature, timestamp)
             elif format_choice == "json":
-                Exporter.save_results(assets, ["json"], timestamp)
+                Exporter.save_results(assets, ["json"], feature, timestamp)
             elif format_choice == "both":
-                Exporter.save_results(assets, ["csv", "json"], timestamp)
+                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
             else:
                 print("[!] Invalid choice, not saving.")
         else:
