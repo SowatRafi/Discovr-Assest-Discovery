@@ -6,33 +6,45 @@ class Tagger:
         os_name = asset.get("OS", "").lower()
         ports = asset.get("Ports", "").lower()
 
-        # Workstations
+        # --- Mobile ---
+        if any(mobile in hostname for mobile in ["iphone", "android", "pixel", "galaxy"]):
+            return "[Mobile]"
+        if "ios" in os_name and "macos" not in os_name:
+            return "[Mobile]"
+        if "android" in os_name:
+            return "[Mobile]"
+
+        # --- Tablet ---
+        if "ipad" in hostname or "tablet" in hostname:
+            return "[Tablet]"
+        if "ipad" in os_name or "ipad os" in os_name:
+            return "[Tablet]"
+
+        # --- macOS ---
+        if "macos" in os_name or "os x" in os_name or ("darwin" in os_name and "ios" not in os_name):
+            return "[Workstation]"
+
+        # --- Windows Workstation ---
         if "windows 10" in os_name or "windows 11" in os_name:
             return "[Workstation]"
 
-        # Servers
+        # --- Servers ---
         if "server" in os_name or "linux" in os_name:
             return "[Server]"
 
-        # Printers
+        # --- Printers ---
         if "printer" in hostname:
             return "[Printer]"
 
-        # IoT
+        # --- IoT ---
         if "camera" in hostname or "iot" in hostname or "chromecast" in hostname:
             return "[IoT]"
 
-        # Mobile Phones
-        if any(word in os_name for word in ["android", "ios", "iphone", "ipad"]):
-            return "[Mobile]"
-        if any(word in hostname for word in ["iphone", "ipad", "android", "samsung", "oneplus", "pixel"]):
-            return "[Mobile]"
-
-        # Network Devices
+        # --- Network Devices ---
         if "router" in hostname or "switch" in hostname or "firewall" in hostname:
             return "[Network]"
 
-        # Web hosts
+        # --- Web Hosts ---
         if "80" in ports or "443" in ports:
             return "[WebHost]"
 
