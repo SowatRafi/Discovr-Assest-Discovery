@@ -12,6 +12,7 @@ from discovr.network import NetworkDiscovery
 from discovr.cloud import CloudDiscovery
 from discovr.active_directory import ADDiscovery
 from discovr.passive import PassiveDiscovery
+from discovr.tagger import Tagger
 from tabulate import tabulate
 
 
@@ -54,7 +55,7 @@ def main():
             log_file, timestamp = Logger.setup(feature)
             scanner = NetworkDiscovery(args.scan_network, args.ports)
             assets, total_hosts, elapsed_time = scanner.run()
-            Reporter.print_results(assets, total_hosts)
+            Reporter.print_results(assets, total_hosts, "active assets")
 
         # Cloud Discovery
         elif args.cloud:
@@ -70,7 +71,7 @@ def main():
             start_time = time.time()
             assets = cloud_scanner.run()
             elapsed_time = time.time() - start_time
-            Reporter.print_results(assets, len(assets))
+            Reporter.print_results(assets, len(assets), "cloud assets")
 
         # Active Directory Discovery
         elif args.ad:
@@ -84,7 +85,7 @@ def main():
             ad_scanner = ADDiscovery(args.domain, args.username, args.password)
             assets = ad_scanner.run()
             elapsed_time = time.time() - start_time
-            Reporter.print_results(assets, len(assets))
+            Reporter.print_results(assets, len(assets), "AD assets")
 
         # Passive Discovery
         elif args.passive:
@@ -96,10 +97,11 @@ def main():
             elapsed_time = args.timeout
 
             if assets:
-                table = [[a["IP"], a["Hostname"], a["OS"], a["Ports"]] for a in assets]
+                tagged_assets = Tagger.tag_assets(assets)
+                table = [[a["IP"], a["Hostname"], a["OS"], a["Ports"], a["Tag"]] for a in tagged_assets]
                 print("\nDiscovered Assets (final report):")
-                print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports"], tablefmt="grid"))
-                print(f"\n[+] {len(assets)} assets discovered during passive monitoring.")
+                print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports", "Tag"], tablefmt="grid"))
+                print(f"\n[+] {len(tagged_assets)} assets discovered during passive monitoring.")
             else:
                 print("\n[!] No assets discovered during passive monitoring.")
 
@@ -117,7 +119,7 @@ def main():
     if feature and timestamp:
         print(f"[+] Logs saved at logs/discovr_{feature}_log_{timestamp}.log")
 
-    # Export prompt (common across all modules)
+    # Export prompt
     if assets:
         choice = input("\nDo you want to save results? (yes/no): ").strip().lower()
         if choice in ["yes", "y"]:
