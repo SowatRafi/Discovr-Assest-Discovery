@@ -35,8 +35,8 @@ def main():
 
     # Passive
     parser.add_argument("--passive", action="store_true", help="Run passive discovery")
-    parser.add_argument("--iface",
-                        help="Network interface for passive discovery (optional, choose interactively if missing)")
+    parser.add_argument("--iface", help="Network interface (optional, choose interactively if missing)")
+    parser.add_argument("--timeout", type=int, default=180, help="Passive discovery timeout in seconds (default: 180)")
 
     args = parser.parse_args()
     timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -82,10 +82,19 @@ def main():
         # Passive Discovery
         elif args.passive:
             print("[+] Running passive discovery")
-            scanner = PassiveDiscovery(iface=args.iface)
+            scanner = PassiveDiscovery(iface=args.iface, timeout=args.timeout)
             assets, total_assets = scanner.run()
-            elapsed_time = 0  # passive mode doesn't measure traditional scan time
-            Reporter.print_results(assets, total_assets)
+            elapsed_time = args.timeout
+
+            # Print passive results in the same table format
+            if assets:
+                from tabulate import tabulate
+                table = [[a["IP"], a["Hostname"], a["OS"], a["Ports"]] for a in assets]
+                print("\nDiscovered Assets (final report):")
+                print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports"], tablefmt="grid"))
+                print(f"\n[+] {len(assets)} assets discovered during passive monitoring.")
+            else:
+                print("\n[!] No assets discovered during passive monitoring.")
 
         else:
             parser.print_help()
@@ -100,7 +109,7 @@ def main():
 
     print(f"[+] Logs saved at logs/discovr_log_{timestamp}.log")
 
-    # Export prompt
+    # Export prompt (common across all modules)
     if assets:
         choice = input("\nDo you want to save results? (yes/no): ").strip().lower()
         if choice in ["yes", "y"]:
