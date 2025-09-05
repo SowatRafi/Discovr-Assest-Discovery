@@ -5,12 +5,12 @@ import csv
 import json
 from tabulate import tabulate
 from discovr.tagger import Tagger
+from discovr.risk import RiskAssessor
 
 
 class Logger:
     @staticmethod
     def setup(feature: str):
-        """Setup logger with feature-based log filename"""
         os.makedirs("logs", exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = os.path.join("logs", f"discovr_{feature}_log_{timestamp}.log")
@@ -33,14 +33,13 @@ class Logger:
 class Exporter:
     @staticmethod
     def save_results(assets, formats, feature: str, timestamp: str):
-        """Save results with feature-based filenames"""
         os.makedirs("csv_report", exist_ok=True)
         os.makedirs("json_report", exist_ok=True)
 
         if "csv" in formats:
             csv_file = os.path.join("csv_report", f"discovr_{feature}_{timestamp}.csv")
             with open(csv_file, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=["IP", "Hostname", "OS", "Ports", "Tag"])
+                writer = csv.DictWriter(f, fieldnames=["IP", "Hostname", "OS", "Ports", "Tag", "Risk"])
                 writer.writeheader()
                 writer.writerows(assets)
             print(f"[+] CSV saved: {csv_file}")
@@ -55,13 +54,12 @@ class Exporter:
 class Reporter:
     @staticmethod
     def print_results(assets, total_hosts, context="assets"):
-        """Print results in tabular form with summary (for active scans)"""
         if assets:
-            # Tag assets before printing
             tagged_assets = Tagger.tag_assets(assets)
-            table = [[a["IP"], a["Hostname"], a["OS"], a["Ports"], a["Tag"]] for a in tagged_assets]
+            risked_assets = RiskAssessor.add_risks(tagged_assets)
+            table = [[a["IP"], a["Hostname"], a["OS"], a["Ports"], a["Tag"], a["Risk"]] for a in risked_assets]
             print("\nDiscovered Assets (final report):")
-            print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports", "Tag"], tablefmt="grid"))
-            print(f"\n[+] {len(tagged_assets)} {context} discovered out of {total_hosts} scanned hosts.")
+            print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports", "Tag", "Risk"], tablefmt="grid"))
+            print(f"\n[+] {len(risked_assets)} {context} discovered out of {total_hosts} scanned hosts.")
         else:
             print("\n[!] No assets discovered.")
