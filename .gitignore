@@ -34,3 +34,8 @@ go.work.sum
 /logs
 /json_report
 /csv_report
+
+# Pycache
+discovr/__pycache__/
+# JetBrains IDEs
+.idea/
