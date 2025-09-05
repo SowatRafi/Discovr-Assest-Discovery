@@ -2,6 +2,7 @@ import argparse
 import sys
 import time
 import warnings
+import ipaddress
 
 # Suppress Scapy warnings (Wireshark manuf + TripleDES deprecation)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -15,6 +16,29 @@ from discovr.passive import PassiveDiscovery
 from discovr.tagger import Tagger
 from tabulate import tabulate
 
+# For autoipaddr
+try:
+    import netifaces
+except ImportError:
+    print("[!] Please install netifaces: pip install netifaces")
+    sys.exit(1)
+
+
+def detect_local_subnet():
+    """Detect local subnet (e.g., 192.168.1.0/24) using default gateway interface"""
+    try:
+        gateways = netifaces.gateways()
+        default_iface = gateways['default'][netifaces.AF_INET][1]
+        addrs = netifaces.ifaddresses(default_iface)[netifaces.AF_INET][0]
+        ip = addrs['addr']
+        netmask = addrs['netmask']
+
+        network = ipaddress.IPv4Network(f"{ip}/{netmask}", strict=False)
+        return str(network)
+    except Exception as e:
+        print(f"[!] Failed to auto-detect local subnet: {e}")
+        sys.exit(1)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Discovr - Asset Discovery Tool")
@@ -24,6 +48,7 @@ def main():
     parser.add_argument("--ports", help="Ports to scan, e.g. 22,80,443")
     parser.add_argument("--parallel", type=int, default=1,
                         help="Number of parallel workers for network scan (default: 1)")
+    parser.add_argument("--autoipaddr", action="store_true", help="Auto-detect local IP and subnet for scanning")
 
     # Cloud
     parser.add_argument("--cloud", choices=["aws", "azure"], help="Cloud provider to scan")
@@ -51,8 +76,20 @@ def main():
     timestamp = None
 
     try:
-        # Network Discovery
-        if args.scan_network:
+        # Auto IP detection for Network
+        if args.autoipaddr:
+            feature = "network"
+            log_file, timestamp = Logger.setup(feature)
+            auto_network = detect_local_subnet()
+            print(f"[+] Auto-detected local subnet: {auto_network}")
+            start_time = time.time()
+            scanner = NetworkDiscovery(auto_network, args.ports, args.parallel)
+            assets, total_hosts, _ = scanner.run()
+            elapsed_time = time.time() - start_time
+            Reporter.print_results(assets, total_hosts, "active assets")
+
+        # Manual Network Discovery
+        elif args.scan_network:
             feature = "network"
             log_file, timestamp = Logger.setup(feature)
             start_time = time.time()
