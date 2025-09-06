@@ -40,3 +40,5 @@ discovr/__pycache__/
 tests/__pycache__/
 # JetBrains IDEs
 .idea/
+# build folder
+build

@@ -553,3 +553,19 @@ Discovered Assets (final report):
 - **AutoIPAddr:** Automatically finds your local subnet.  
 
 ---
+
+## 🔹 Build Executable
+```bash
+pyinstaller --onefile --name discovr discovr/cli.py
+```
+
+## 🔹 requirements.txt
+```bash
+pip install -r requirements.txt
+```
+
+## 🔹 environment.yml
+```bash
+conda env create -f environment.yml
+
+```
