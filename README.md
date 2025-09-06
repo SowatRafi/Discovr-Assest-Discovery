@@ -563,9 +563,3 @@ pyinstaller --onefile --name discovr discovr/cli.py
 ```bash
 pip install -r requirements.txt
 ```
-
-## 🔹 environment.yml
-```bash
-conda env create -f environment.yml
-
-```
