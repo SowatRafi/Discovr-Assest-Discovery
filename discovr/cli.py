@@ -42,6 +42,43 @@ def detect_local_subnet():
         sys.exit(1)
 
 
+def handle_export(assets, feature, timestamp, args):
+    """Handle saving results interactively or automatically"""
+    if not assets:
+        return
+
+    # Non-interactive mode if --save/--format provided
+    if args.save or args.format:
+        if args.save and args.save.lower() in ["yes", "y"]:
+            fmt = args.format if args.format else "csv"
+            if fmt == "csv":
+                Exporter.save_results(assets, ["csv"], feature, timestamp)
+            elif fmt == "json":
+                Exporter.save_results(assets, ["json"], feature, timestamp)
+            elif fmt == "both":
+                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
+            else:
+                print("[!] Invalid format option, not saving.")
+        else:
+            print("[+] Results not saved.")
+        return
+
+    # Interactive fallback
+    choice = input("\nDo you want to save results? (yes/no): ").strip().lower()
+    if choice in ["yes", "y"]:
+        format_choice = input("Choose format (csv/json/both): ").strip().lower()
+        if format_choice == "csv":
+            Exporter.save_results(assets, ["csv"], feature, timestamp)
+        elif format_choice == "json":
+            Exporter.save_results(assets, ["json"], feature, timestamp)
+        elif format_choice == "both":
+            Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
+        else:
+            print("[!] Invalid choice, not saving.")
+    else:
+        print("[+] Results not saved.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Discovr - Asset Discovery Tool")
 
@@ -70,6 +107,11 @@ def main():
     parser.add_argument("--passive", action="store_true", help="Run passive discovery")
     parser.add_argument("--iface", help="Network interface (optional, choose interactively if missing)")
     parser.add_argument("--timeout", type=int, default=180, help="Passive discovery timeout in seconds (default: 180)")
+
+    # Export (applies to all features)
+    parser.add_argument("--save", choices=["yes", "no"],
+                        help="Auto-save results without prompt (overrides interactive mode)")
+    parser.add_argument("--format", choices=["csv", "json", "both"], help="Export format if saving is enabled")
 
     args = parser.parse_args()
 
@@ -189,23 +231,10 @@ def main():
         print(f"[+] Total execution time: {elapsed_time:.2f} seconds")
 
     if feature and timestamp:
-        print(f"[+] Logs saved at logs/discovr_{feature}_log_{timestamp}.log")
+        print(f"[+] Logs saved at Documents/discovr_reports/logs/discovr_{feature}_log_{timestamp}.log")
 
-    # Export prompt
-    if assets:
-        choice = input("\nDo you want to save results? (yes/no): ").strip().lower()
-        if choice in ["yes", "y"]:
-            format_choice = input("Choose format (csv/json/both): ").strip().lower()
-            if format_choice == "csv":
-                Exporter.save_results(assets, ["csv"], feature, timestamp)
-            elif format_choice == "json":
-                Exporter.save_results(assets, ["json"], feature, timestamp)
-            elif format_choice == "both":
-                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
-            else:
-                print("[!] Invalid choice, not saving.")
-        else:
-            print("[+] Results not saved.")
+    # Handle export (interactive or auto-save)
+    handle_export(assets, feature, timestamp, args)
 
 
 if __name__ == "__main__":

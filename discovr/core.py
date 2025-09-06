@@ -41,12 +41,26 @@ class Exporter:
     def save_results(assets, formats, feature: str, timestamp: str):
         """
         Save discovered assets into CSV and/or JSON in Documents/discovr_reports folders.
+        Ports will always be exported as a clean comma-separated string.
         """
         base_path = Path.home() / "Documents" / "discovr_reports"
         csv_dir = base_path / "csv"
         json_dir = base_path / "json"
         csv_dir.mkdir(parents=True, exist_ok=True)
         json_dir.mkdir(parents=True, exist_ok=True)
+
+        # Normalize ports before saving
+        normalized_assets = []
+        for asset in assets:
+            normalized_asset = asset.copy()
+            ports = normalized_asset.get("Ports", "None")
+            if isinstance(ports, list):
+                normalized_asset["Ports"] = ",".join(map(str, ports)) if ports else "None"
+            elif isinstance(ports, str):
+                normalized_asset["Ports"] = ports
+            else:
+                normalized_asset["Ports"] = str(ports)
+            normalized_assets.append(normalized_asset)
 
         if "csv" in formats:
             csv_file = csv_dir / f"discovr_{feature}_{timestamp}.csv"
@@ -55,13 +69,13 @@ class Exporter:
                     f, fieldnames=["IP", "Hostname", "OS", "Ports", "Tag", "Risk"]
                 )
                 writer.writeheader()
-                writer.writerows(assets)
+                writer.writerows(normalized_assets)
             print(f"[+] CSV saved: {csv_file}")
 
         if "json" in formats:
             json_file = json_dir / f"discovr_{feature}_{timestamp}.json"
             with open(json_file, "w", encoding="utf-8") as f:
-                json.dump(assets, f, indent=4)
+                json.dump(normalized_assets, f, indent=4)
             print(f"[+] JSON saved: {json_file}")
 
 
