@@ -13,6 +13,7 @@ from discovr.network import NetworkDiscovery
 from discovr.cloud import CloudDiscovery
 from discovr.active_directory import ADDiscovery
 from discovr.passive import PassiveDiscovery
+from discovr.gcp import GCPDiscovery
 from discovr.tagger import Tagger
 from discovr.risk import RiskAssessor
 from tabulate import tabulate
@@ -52,10 +53,12 @@ def main():
     parser.add_argument("--autoipaddr", action="store_true", help="Auto-detect local IP and subnet for scanning")
 
     # Cloud
-    parser.add_argument("--cloud", choices=["aws", "azure"], help="Cloud provider to scan")
+    parser.add_argument("--cloud", choices=["aws", "azure", "gcp"], help="Cloud provider to scan")
     parser.add_argument("--profile", default="default", help="AWS profile (default: default)")
     parser.add_argument("--region", default="us-east-1", help="AWS region (default: us-east-1)")
     parser.add_argument("--subscription", help="Azure subscription ID")
+    parser.add_argument("--project", help="GCP project ID for discovery")
+    parser.add_argument("--zone", help="GCP zone for discovery (e.g., us-central1-a)")
 
     # Active Directory
     parser.add_argument("--ad", action="store_true", help="Run Active Directory discovery")
@@ -103,17 +106,43 @@ def main():
         elif args.cloud:
             feature = "cloud"
             log_file, timestamp = Logger.setup(feature)
-            cloud_scanner = CloudDiscovery(
-                provider=args.cloud,
-                profile=args.profile,
-                region=args.region,
-                subscription=args.subscription,
-            )
-            print(f"[+] Discovering {args.cloud.upper()} assets...")
-            start_time = time.time()
-            assets = cloud_scanner.run()
-            elapsed_time = time.time() - start_time
-            Reporter.print_results(assets, len(assets), "cloud assets")
+
+            if args.cloud == "aws":
+                cloud_scanner = CloudDiscovery(
+                    provider=args.cloud,
+                    profile=args.profile,
+                    region=args.region,
+                    subscription=args.subscription,
+                )
+                print(f"[+] Discovering AWS assets...")
+                start_time = time.time()
+                assets = cloud_scanner.run()
+                elapsed_time = time.time() - start_time
+                Reporter.print_results(assets, len(assets), "cloud assets")
+
+            elif args.cloud == "azure":
+                cloud_scanner = CloudDiscovery(
+                    provider=args.cloud,
+                    profile=args.profile,
+                    region=args.region,
+                    subscription=args.subscription,
+                )
+                print(f"[+] Discovering AZURE assets...")
+                start_time = time.time()
+                assets = cloud_scanner.run()
+                elapsed_time = time.time() - start_time
+                Reporter.print_results(assets, len(assets), "cloud assets")
+
+            elif args.cloud == "gcp":
+                if not args.project or not args.zone:
+                    print("[!] GCP discovery requires --project and --zone")
+                    sys.exit(1)
+                print(f"[+] Discovering GCP assets in project {args.project}, zone {args.zone}")
+                start_time = time.time()
+                gcp_scanner = GCPDiscovery(args.project, args.zone)
+                assets = gcp_scanner.run()
+                elapsed_time = time.time() - start_time
+                Reporter.print_results(assets, len(assets), "cloud assets")
 
         # Active Directory Discovery
         elif args.ad:
