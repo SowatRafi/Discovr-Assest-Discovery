@@ -563,3 +563,63 @@ pyinstaller --onefile --name discovr discovr/cli.py
 ```bash
 pip install -r requirements.txt
 ```
+
+# Discovr - Non-Interactive Export Options (--save / --format)
+
+This document demonstrates how to use the new `--save` and `--format` options with **Network Discovery**.
+
+---
+
+## 🔹 Arguments
+- `--save yes` → Automatically save results without prompting.  
+- `--save no` → Do not save results (skips prompts).  
+- `--format csv` → Save only CSV file.  
+- `--format json` → Save only JSON file.  
+- `--format both` → Save both CSV and JSON.  
+
+If no `--save` or `--format` is provided, Discovr remains **interactive** and will ask:  
+```
+Do you want to save results? (yes/no):
+Choose format (csv/json/both):
+```
+
+---
+
+## 🔹 Example Run (Network Discovery with --save and --format)
+
+### Command
+```bash
+python -m discovr.cli --scan-network 192.168.1.0/24 --parallel 5 --save yes --format both
+```
+
+### Output
+```text
+[+] Logs saved at /Users/demo/Documents/discovr_reports/logs/discovr_network_log_20250906_230000.log
+[+] Scanning network: 192.168.1.0/24 with 5 parallel workers
+[+] Running OS detection scan (requires admin privileges)
+    [+] Found: 192.168.1.1 (router) | OS: Linux/Unix | Ports: 80,443
+    [+] Found: 192.168.1.10 (laptop01) | OS: Windows 10 Pro | Ports: 135,445
+    [+] Found: 192.168.1.20 (server01) | OS: Linux 5.x kernel | Ports: 22,80,443
+
+Discovered Assets (final report):
++---------------+-----------+-------------------+-----------+--------------+--------+
+| IP            | Hostname  | OS                | Ports     | Tag          | Risk   |
++---------------+-----------+-------------------+-----------+--------------+--------+
+| 192.168.1.1   | router    | Linux/Unix        | 80,443    | [Network]    | Medium |
+| 192.168.1.10  | laptop01  | Windows 10 Pro    | 135,445   | [Workstation]| Medium |
+| 192.168.1.20  | server01  | Linux 5.x kernel  | 22,80,443 | [Server]     | Medium |
++---------------+-----------+-------------------+-----------+--------------+--------+
+
+[+] 3 active assets discovered out of 256 scanned hosts.
+[+] Total execution time: 19.42 seconds
+[+] Logs saved at /Users/demo/Documents/discovr_reports/logs/discovr_network_log_20250906_230000.log
+[+] CSV saved: /Users/demo/Documents/discovr_reports/csv/discovr_network_20250906_230000.csv
+[+] JSON saved: /Users/demo/Documents/discovr_reports/json/discovr_network_20250906_230000.json
+```
+
+---
+
+## 🔹 Notes
+- Works on all platforms (Windows, Linux, macOS).  
+- Useful for **non-interactive runs** (e.g., cron jobs, macOS `sudo` execution, CI/CD).  
+- Can be used with **any feature** (Network, Cloud, AD, Passive).  
