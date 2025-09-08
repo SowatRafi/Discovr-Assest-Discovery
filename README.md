@@ -559,6 +559,11 @@ Discovered Assets (final report):
 pyinstaller --onefile --name discovr discovr/cli.py
 ```
 
+## 🔹 Dockerfile
+```bash
+docker build -t discovr .
+```
+
 ## 🔹 requirements.txt
 ```bash
 pip install -r requirements.txt
