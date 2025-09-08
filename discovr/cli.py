@@ -5,6 +5,8 @@ import warnings
 import ipaddress
 import platform
 import signal
+import os
+import ctypes
 
 # Suppress Scapy warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -42,19 +44,27 @@ def detect_local_subnet():
         sys.exit(1)
 
 
+def is_admin_windows():
+    """Check if Windows process is running with Administrator privileges"""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
+
 def show_privilege_hint(system, assets):
-    """Give OS-specific privilege hints"""
+    """Give OS-specific privilege hints only if not running elevated"""
     if not assets:
-        if system == "Windows":
+        if system == "Windows" and not is_admin_windows():
             print("[!] No assets discovered. Please try running again as Administrator on Windows for full functionality.")
-        elif system in ["Linux", "Darwin"]:
+        elif system in ["Linux", "Darwin"] and os.geteuid() != 0:
             print("[!] No assets discovered. Please try running again with sudo on macOS/Linux for full functionality.")
         return
 
-    if system in ["Linux", "Darwin"]:
+    if system in ["Linux", "Darwin"] and os.geteuid() != 0:
         print("[!] Please try running again with sudo on macOS/Linux for OS detection and full functionality.")
 
-    if system == "Windows":
+    if system == "Windows" and not is_admin_windows():
         failed_os = any("Unknown" in str(a.get("OS", "")) for a in assets)
         if failed_os:
             print("[!] Please try running again as Administrator on Windows for OS detection and full functionality.")
@@ -73,8 +83,9 @@ def handle_export(assets, feature, timestamp, args):
             choice = args.save if args.save else "yes"
             fmt = args.format if args.format else "both"
         else:
-            print("[!] Please run with sudo and use --save and --format")
-            print("    ; otherwise, results will be automatically saved in both CSV and JSON formats.")
+            if os.geteuid() != 0:  # only show alert if not sudo
+                print("[!] Please run with sudo and use --save and --format")
+                print("    ; otherwise, results will be automatically saved in both CSV and JSON formats.")
             choice = "yes"
             fmt = "both"
 
@@ -250,9 +261,9 @@ def main():
             except Exception as e:
                 print(f"[!] Fatal error: {e}")
                 system = platform.system()
-                if system in ["Linux", "Darwin"]:
+                if system in ["Linux", "Darwin"] and os.geteuid() != 0:
                     print("[!] Passive discovery failed. Please try running again with sudo on macOS/Linux.")
-                elif system == "Windows":
+                elif system == "Windows" and not is_admin_windows():
                     print("[!] Passive discovery failed. Please try running again as Administrator on Windows.")
                 sys.exit(1)
 
