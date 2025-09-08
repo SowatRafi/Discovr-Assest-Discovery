@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['discovr\\cli.py'],
+    ['discovr/cli.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -24,7 +24,7 @@ exe = EXE(
     [],
     name='discovr',
     debug=False,
-    bootloader_ignore_signals=False,clea
+    bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
