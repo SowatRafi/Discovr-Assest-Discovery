@@ -1,44 +1,84 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+# -----------------------------
+# OS-Specific
+# -----------------------------
 
-# Test binary, built with `go test -c`
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.nfs*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# -----------------------------
+# Python
+# -----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+
+# Jupyter
+.ipynb_checkpoints
+
+# -----------------------------
+# Build / Packaging
+# -----------------------------
+build/
+dist/
+*.spec
+
+# Logs & Reports
+/logs
+/json_report
+/csv_report
+discovr_reports/
+
+# Coverage / Testing
 *.test
-
-# Code coverage profiles and other test artifacts
 *.out
 coverage.*
 *.coverprofile
 profile.cov
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
+# Dependency directories
+vendor/
 go.work
 go.work.sum
 
-# env file
+# Environment
 .env
 
-# Editor/IDE
-# .idea/
-# .vscode/
-
-/logs
-/json_report
-/csv_report
-
-# Pycache
-discovr/__pycache__/
-tests/__pycache__/
-# JetBrains IDEs
+# -----------------------------
+# IDEs / Editors
+# -----------------------------
 .idea/
-# build folder
-build
+.vscode/
+*.swp
+
+# -----------------------------
+# Docker
+# -----------------------------
+# Ignore Docker-related artifacts
+.dockerignore
+docker-compose.override.yml
+docker-compose.local.yml
+docker-compose.dev.yml
