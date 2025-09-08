@@ -3,8 +3,10 @@ import sys
 import time
 import warnings
 import ipaddress
+import platform
+import signal
 
-# Suppress Scapy warnings (Wireshark manuf + TripleDES deprecation)
+# Suppress Scapy warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -18,7 +20,6 @@ from discovr.tagger import Tagger
 from discovr.risk import RiskAssessor
 from tabulate import tabulate
 
-# For autoipaddr
 try:
     import netifaces
 except ImportError:
@@ -27,14 +28,13 @@ except ImportError:
 
 
 def detect_local_subnet():
-    """Detect local subnet (e.g., 192.168.1.0/24) using default gateway interface"""
+    """Detect local subnet using default gateway interface"""
     try:
         gateways = netifaces.gateways()
         default_iface = gateways['default'][netifaces.AF_INET][1]
         addrs = netifaces.ifaddresses(default_iface)[netifaces.AF_INET][0]
         ip = addrs['addr']
         netmask = addrs['netmask']
-
         network = ipaddress.IPv4Network(f"{ip}/{netmask}", strict=False)
         return str(network)
     except Exception as e:
@@ -42,41 +42,84 @@ def detect_local_subnet():
         sys.exit(1)
 
 
+def show_privilege_hint(system, assets):
+    """Give OS-specific privilege hints"""
+    if not assets:
+        if system == "Windows":
+            print("[!] No assets discovered. Please try running again as Administrator on Windows for OS detection and full functionality.")
+        elif system in ["Linux", "Darwin"]:
+            print("[!] No assets discovered. Please try running again with sudo on macOS/Linux for OS detection and full functionality.")
+        return
+
+    if system in ["Linux", "Darwin"]:
+        # If Nmap OS detection failed (user not root)
+        print("[!] Please try running again with sudo on macOS/Linux for OS detection and full functionality.")
+
+    if system == "Windows":
+        # If OS is unknown
+        failed_os = any("Unknown" in str(a.get("OS", "")) for a in assets)
+        if failed_os:
+            print("[!] Please try running again as Administrator on Windows for OS detection and full functionality.")
+
+
 def handle_export(assets, feature, timestamp, args):
-    """Handle saving results interactively or automatically"""
+    """Handle saving results based on OS behavior"""
     if not assets:
         return
 
-    # Non-interactive mode if --save/--format provided
-    if args.save or args.format:
-        if args.save and args.save.lower() in ["yes", "y"]:
-            fmt = args.format if args.format else "csv"
+    system = platform.system()
+
+    # Linux / macOS behavior
+    if system in ["Linux", "Darwin"]:
+        if args.save or args.format:
+            choice = args.save if args.save else "yes"
+            fmt = args.format if args.format else "both"
+        else:
+            print("[!] Please run with sudo and use --save and --format")
+            print("    ; otherwise, results will be automatically saved in both CSV and JSON formats.")
+            choice = "yes"
+            fmt = "both"
+
+        if choice in ["yes", "y"]:
             if fmt == "csv":
                 Exporter.save_results(assets, ["csv"], feature, timestamp)
             elif fmt == "json":
                 Exporter.save_results(assets, ["json"], feature, timestamp)
-            elif fmt == "both":
-                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
             else:
-                print("[!] Invalid format option, not saving.")
+                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
         else:
             print("[+] Results not saved.")
         return
 
-    # Interactive fallback
-    choice = input("\nDo you want to save results? (yes/no): ").strip().lower()
-    if choice in ["yes", "y"]:
-        format_choice = input("Choose format (csv/json/both): ").strip().lower()
-        if format_choice == "csv":
-            Exporter.save_results(assets, ["csv"], feature, timestamp)
-        elif format_choice == "json":
-            Exporter.save_results(assets, ["json"], feature, timestamp)
-        elif format_choice == "both":
-            Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
+    # Windows behavior
+    if system == "Windows":
+        def timeout_handler(signum, frame):
+            raise TimeoutError
+
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(15)
+
+        try:
+            choice = input("\nDo you want to save results? (yes/no): ").strip().lower()
+            signal.alarm(0)
+        except TimeoutError:
+            print("\n[!] No response after 15 seconds. Automatically saving results in both formats.")
+            choice = "yes"
+            fmt = "both"
+        except EOFError:
+            choice = "no"
+            fmt = "csv"
+
+        if choice in ["yes", "y"]:
+            fmt = args.format if args.format else input("Choose format (csv/json/both): ").strip().lower()
+            if fmt == "csv":
+                Exporter.save_results(assets, ["csv"], feature, timestamp)
+            elif fmt == "json":
+                Exporter.save_results(assets, ["json"], feature, timestamp)
+            else:
+                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
         else:
-            print("[!] Invalid choice, not saving.")
-    else:
-        print("[+] Results not saved.")
+            print("[+] Results not saved.")
 
 
 def main():
@@ -85,8 +128,7 @@ def main():
     # Network
     parser.add_argument("--scan-network", help="Network range, e.g. 192.168.1.0/24")
     parser.add_argument("--ports", help="Ports to scan, e.g. 22,80,443")
-    parser.add_argument("--parallel", type=int, default=1,
-                        help="Number of parallel workers for network scan (default: 1)")
+    parser.add_argument("--parallel", type=int, default=1, help="Number of parallel workers for network scan (default: 1)")
     parser.add_argument("--autoipaddr", action="store_true", help="Auto-detect local IP and subnet for scanning")
 
     # Cloud
@@ -108,9 +150,8 @@ def main():
     parser.add_argument("--iface", help="Network interface (optional, choose interactively if missing)")
     parser.add_argument("--timeout", type=int, default=180, help="Passive discovery timeout in seconds (default: 180)")
 
-    # Export (applies to all features)
-    parser.add_argument("--save", choices=["yes", "no"],
-                        help="Auto-save results without prompt (overrides interactive mode)")
+    # Export
+    parser.add_argument("--save", choices=["yes", "no"], help="Auto-save results without prompt")
     parser.add_argument("--format", choices=["csv", "json", "both"], help="Export format if saving is enabled")
 
     args = parser.parse_args()
@@ -122,7 +163,6 @@ def main():
     timestamp = None
 
     try:
-        # Auto IP detection for Network
         if args.autoipaddr:
             feature = "network"
             log_file, timestamp = Logger.setup(feature)
@@ -134,7 +174,6 @@ def main():
             elapsed_time = time.time() - start_time
             Reporter.print_results(assets, total_hosts, "active assets")
 
-        # Manual Network Discovery
         elif args.scan_network:
             feature = "network"
             log_file, timestamp = Logger.setup(feature)
@@ -144,49 +183,28 @@ def main():
             elapsed_time = time.time() - start_time
             Reporter.print_results(assets, total_hosts, "active assets")
 
-        # Cloud Discovery
         elif args.cloud:
             feature = "cloud"
             log_file, timestamp = Logger.setup(feature)
 
             if args.cloud == "aws":
-                cloud_scanner = CloudDiscovery(
-                    provider=args.cloud,
-                    profile=args.profile,
-                    region=args.region,
-                    subscription=args.subscription,
-                )
                 print(f"[+] Discovering AWS assets...")
-                start_time = time.time()
-                assets = cloud_scanner.run()
-                elapsed_time = time.time() - start_time
-                Reporter.print_results(assets, len(assets), "cloud assets")
-
+                scanner = CloudDiscovery(args.cloud, args.profile, args.region, args.subscription)
             elif args.cloud == "azure":
-                cloud_scanner = CloudDiscovery(
-                    provider=args.cloud,
-                    profile=args.profile,
-                    region=args.region,
-                    subscription=args.subscription,
-                )
-                print(f"[+] Discovering AZURE assets...")
-                start_time = time.time()
-                assets = cloud_scanner.run()
-                elapsed_time = time.time() - start_time
-                Reporter.print_results(assets, len(assets), "cloud assets")
-
+                print(f"[+] Discovering Azure assets...")
+                scanner = CloudDiscovery(args.cloud, args.profile, args.region, args.subscription)
             elif args.cloud == "gcp":
                 if not args.project or not args.zone:
                     print("[!] GCP discovery requires --project and --zone")
                     sys.exit(1)
                 print(f"[+] Discovering GCP assets in project {args.project}, zone {args.zone}")
-                start_time = time.time()
-                gcp_scanner = GCPDiscovery(args.project, args.zone)
-                assets = gcp_scanner.run()
-                elapsed_time = time.time() - start_time
-                Reporter.print_results(assets, len(assets), "cloud assets")
+                scanner = GCPDiscovery(args.project, args.zone)
 
-        # Active Directory Discovery
+            start_time = time.time()
+            assets = scanner.run()
+            elapsed_time = time.time() - start_time
+            Reporter.print_results(assets, len(assets), "cloud assets")
+
         elif args.ad:
             feature = "ad"
             log_file, timestamp = Logger.setup(feature)
@@ -195,12 +213,11 @@ def main():
                 sys.exit(1)
             print(f"[+] Discovering Active Directory assets in {args.domain}")
             start_time = time.time()
-            ad_scanner = ADDiscovery(args.domain, args.username, args.password)
-            assets = ad_scanner.run()
+            scanner = ADDiscovery(args.domain, args.username, args.password)
+            assets = scanner.run()
             elapsed_time = time.time() - start_time
             Reporter.print_results(assets, len(assets), "AD assets")
 
-        # Passive Discovery
         elif args.passive:
             feature = "passive"
             log_file, timestamp = Logger.setup(feature)
@@ -233,7 +250,11 @@ def main():
     if feature and timestamp:
         print(f"[+] Logs saved at Documents/discovr_reports/logs/discovr_{feature}_log_{timestamp}.log")
 
-    # Handle export (interactive or auto-save)
+    # OS-specific hints
+    system = platform.system()
+    show_privilege_hint(system, assets)
+
+    # Handle export
     handle_export(assets, feature, timestamp, args)
 
 
