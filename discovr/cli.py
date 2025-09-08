@@ -46,17 +46,15 @@ def show_privilege_hint(system, assets):
     """Give OS-specific privilege hints"""
     if not assets:
         if system == "Windows":
-            print("[!] No assets discovered. Please try running again as Administrator on Windows for OS detection and full functionality.")
+            print("[!] No assets discovered. Please try running again as Administrator on Windows for full functionality.")
         elif system in ["Linux", "Darwin"]:
-            print("[!] No assets discovered. Please try running again with sudo on macOS/Linux for OS detection and full functionality.")
+            print("[!] No assets discovered. Please try running again with sudo on macOS/Linux for full functionality.")
         return
 
     if system in ["Linux", "Darwin"]:
-        # If Nmap OS detection failed (user not root)
         print("[!] Please try running again with sudo on macOS/Linux for OS detection and full functionality.")
 
     if system == "Windows":
-        # If OS is unknown
         failed_os = any("Unknown" in str(a.get("OS", "")) for a in assets)
         if failed_os:
             print("[!] Please try running again as Administrator on Windows for OS detection and full functionality.")
@@ -222,19 +220,41 @@ def main():
             feature = "passive"
             log_file, timestamp = Logger.setup(feature)
             print("[+] Running passive discovery")
-            scanner = PassiveDiscovery(iface=args.iface, timeout=args.timeout)
-            assets, total_assets = scanner.run()
-            elapsed_time = args.timeout
+            try:
+                scanner = PassiveDiscovery(iface=args.iface, timeout=args.timeout)
+                assets, total_assets = scanner.run()
+                elapsed_time = args.timeout
 
-            if assets:
-                tagged_assets = Tagger.tag_assets(assets)
-                risked_assets = RiskAssessor.add_risks(tagged_assets)
-                table = [[a["IP"], a["Hostname"], a["OS"], a["Ports"], a["Tag"], a["Risk"]] for a in risked_assets]
-                print("\nDiscovered Assets (final report):")
-                print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports", "Tag", "Risk"], tablefmt="grid"))
-                print(f"\n[+] {len(risked_assets)} assets discovered during passive monitoring.")
-            else:
-                print("\n[!] No assets discovered during passive monitoring.")
+                if assets:
+                    tagged_assets = Tagger.tag_assets(assets)
+                    risked_assets = RiskAssessor.add_risks(tagged_assets)
+                    table = [
+                        [a["IP"], a["Hostname"], a["OS"], a["Ports"], a["Tag"], a["Risk"]]
+                        for a in risked_assets
+                    ]
+                    print("\nDiscovered Assets (final report):")
+                    print(
+                        tabulate(
+                            table,
+                            headers=["IP", "Hostname", "OS", "Ports", "Tag", "Risk"],
+                            tablefmt="grid",
+                        )
+                    )
+                    print(f"\n[+] {len(risked_assets)} assets discovered during passive monitoring.")
+                else:
+                    print("\n[!] No assets discovered during passive monitoring.")
+                    show_privilege_hint(platform.system(), assets)
+
+                handle_export(assets, feature, timestamp, args)
+
+            except Exception as e:
+                print(f"[!] Fatal error: {e}")
+                system = platform.system()
+                if system in ["Linux", "Darwin"]:
+                    print("[!] Passive discovery failed. Please try running again with sudo on macOS/Linux.")
+                elif system == "Windows":
+                    print("[!] Passive discovery failed. Please try running again as Administrator on Windows.")
+                sys.exit(1)
 
         else:
             parser.print_help()
@@ -250,12 +270,12 @@ def main():
     if feature and timestamp:
         print(f"[+] Logs saved at Documents/discovr_reports/logs/discovr_{feature}_log_{timestamp}.log")
 
-    # OS-specific hints
-    system = platform.system()
-    show_privilege_hint(system, assets)
+    if feature in ["network", "cloud", "ad"]:
+        system = platform.system()
+        show_privilege_hint(system, assets)
 
-    # Handle export
-    handle_export(assets, feature, timestamp, args)
+    if feature != "passive":
+        handle_export(assets, feature, timestamp, args)
 
 
 if __name__ == "__main__":
