@@ -4,9 +4,12 @@ import time
 import warnings
 import ipaddress
 import platform
-import signal
 import os
 import ctypes
+
+# Windows-specific
+if platform.system() == "Windows":
+    import msvcrt
 
 # Suppress Scapy warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -102,25 +105,61 @@ def handle_export(assets, feature, timestamp, args):
 
     # Windows behavior
     if system == "Windows":
-        def timeout_handler(signum, frame):
-            raise TimeoutError
+        # Respect --save argument immediately
+        if args.save == "no":
+            print("[+] Results not saved.")
+            return
+        elif args.save == "yes":
+            fmt = args.format if args.format else "both"
+            if fmt == "csv":
+                Exporter.save_results(assets, ["csv"], feature, timestamp)
+            elif fmt == "json":
+                Exporter.save_results(assets, ["json"], feature, timestamp)
+            else:
+                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
+            return
 
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(15)
+        # Interactive with timeout using msvcrt
+        print("\nDo you want to save results? (yes/no): ", end="", flush=True)
+        start = time.time()
+        buffer = ""
 
-        try:
-            choice = input("\nDo you want to save results? (yes/no): ").strip().lower()
-            signal.alarm(0)
-        except TimeoutError:
-            print("\n[!] No response after 15 seconds. Automatically saving results in both formats.")
-            choice = "yes"
-            fmt = "both"
-        except EOFError:
-            choice = "no"
-            fmt = "csv"
+        warned10 = False
+        warned5 = False
 
+        while True:
+            elapsed = time.time() - start
+            remaining = 15 - int(elapsed)
+
+            if msvcrt.kbhit():
+                char = msvcrt.getwch()
+                if char == "\r":  # Enter pressed
+                    print()
+                    break
+                elif char == "\b":  # Backspace
+                    buffer = buffer[:-1]
+                    sys.stdout.write("\b \b")
+                else:
+                    buffer += char
+                    sys.stdout.write(char)
+                    sys.stdout.flush()
+
+            if remaining <= 0:
+                print("\n[!] No response received. Automatically saving results in both formats.")
+                buffer = "yes"
+                break
+            elif remaining == 10 and not warned10:
+                print(f"\n[!] Auto-saving results in 10 seconds...", flush=True)
+                warned10 = True
+            elif remaining == 5 and not warned5:
+                print(f"\n[!] Auto-saving results in 5 seconds...", flush=True)
+                warned5 = True
+
+            time.sleep(0.1)
+
+        choice = buffer.strip().lower()
         if choice in ["yes", "y"]:
-            fmt = args.format if args.format else input("Choose format (csv/json/both): ").strip().lower()
+            fmt = args.format if args.format else "both"
             if fmt == "csv":
                 Exporter.save_results(assets, ["csv"], feature, timestamp)
             elif fmt == "json":
