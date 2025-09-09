@@ -1,12 +1,12 @@
 # Discovr - Windows Binary Usage Guide
 
 This guide shows how to use the **Windows binary (`discovr.exe`)** for all features of Discovr.  
-It covers multiple ways to run each feature, how to execute it in PowerShell, and the expected outputs.  
+It includes multiple ways to run each feature, expected outputs, and details about **countdown auto-save** when no input is given.
 
 ---
 
 ## 🔹 Running the Binary
-1. Navigate to the folder containing the binary (usually `dist\` after PyInstaller build):
+1. Navigate to the folder containing the binary (usually `dist\`):
    ```powershell
    cd "C:\Users\<YourUsername>\Documents\Discovr-Assest-Discovery\dist"
    ```
@@ -16,7 +16,7 @@ It covers multiple ways to run each feature, how to execute it in PowerShell, an
    .\discovr.exe [OPTIONS]
    ```
 
-3. Make sure to run as **Administrator** (required for OS detection and raw socket access):
+3. Run as **Administrator** for accurate results:
    ```powershell
    Start-Process .\discovr.exe -ArgumentList "--scan-network 192.168.1.0/24" -Verb runAs
    ```
@@ -45,16 +45,50 @@ It covers multiple ways to run each feature, how to execute it in PowerShell, an
 .\discovr.exe --autoipaddr --parallel 5
 ```
 
-### Non-Interactive Save
+---
+
+## 📊 Export Options on Windows
+
+### Non-Interactive Save (recommended for scripts)
 ```powershell
 .\discovr.exe --scan-network 192.168.1.0/24 --save yes --format both
 ```
+Saves directly without asking.
 
-Output:
-```text
-[+] CSV saved: C:\Users\demo\Documents\discovr_reports\csv\discovr_network_20250906_230500.csv
-[+] JSON saved: C:\Users\demo\Documents\discovr_reports\json\discovr_network_20250906_230500.json
+### Disable Saving
+```powershell
+.\discovr.exe --scan-network 192.168.1.0/24 --save no
 ```
+Does not prompt and does not save.
+
+---
+
+### Interactive Save (default if no --save provided)
+
+If you don’t use `--save`, Discovr will prompt:
+```
+Do you want to save results? (yes/no):
+```
+
+- If you type **yes** → you’ll be asked format:
+  ```
+  Choose format (csv/json/both):
+  ```
+
+- If you type **no** → results will not be saved.
+
+- If you do **nothing** → a **countdown timer** runs:
+
+```
+Do you want to save results? (yes/no):
+[!] Auto-saving results in 10 seconds...
+[!] Auto-saving results in 5 seconds...
+[!] No response received. Automatically saving results in both formats.
+[+] CSV saved: C:\Users\demo\Documents\discovr_reports\csv\discovr_network_20250909_113000.csv
+[+] JSON saved: C:\Users\demo\Documents\discovr_reports\json\discovr_network_20250909_113000.json
+```
+
+✅ This ensures results are **always saved safely** even if unattended.
 
 ---
 
