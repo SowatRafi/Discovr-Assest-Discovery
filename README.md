@@ -261,28 +261,79 @@ Discovered Assets (final report):
 ---
 
 ### 2. Azure Discovery (`--cloud azure --subscription`)
+#### Discovr – Azure Deep Asset Discovery
+
+Discovr now includes **professional Azure deep discovery**, giving you a full summary of your Azure subscription:
+- **Resource Groups**
+- **Virtual Machines** (OS, Size, PowerState, Risk, OpenPorts, IPs, NICs, Subnet/VNet, Tags)
+- **Virtual Networks** (Address space, Subnets, DNS, Risk)
+- **Network Security Groups** (Rules, Associations, Risk)
+
+Results are shown in a **portal-like terminal output** and exported into **optimized JSON/CSV reports**.
 ```bash
 python -m discovr.cli --cloud azure --subscription 12345678-abcd-1234-efgh-9876543210ab
 ```
 Output:
 ```text
-[+] Logs saved at logs\discovr_cloud_log_20250906_140030.log
-[+] Discovering AZURE assets...
-    [+] Azure VM: 20.50.30.10 (azureweb01) | OS: Ubuntu 22.04
-    [+] Azure VM: 10.0.0.5 (azuresql01) | OS: Windows Server 2022
-    [+] Azure VM: 10.0.0.15 (azuredev01) | OS: Windows 11 Pro
+[+] Logs saved at /Users/demo/Documents/discovr_reports/logs/discovr_cloud_log_20250923_164151.log
+[+] Discovering Azure assets in subscription 12345678-abcd-1234-efgh-9876543210ab
+[+] Collecting Resource Groups...
+    [+] RG: Discovr-Test | Location: australiaeast
+[+] Collecting Virtual Machines...
+    [+] VM: rafi98 | OS: Linux | Size: Standard_D2s_v4 | PrivateIP: 172.18.0.4 | PublicIP: 20.213.12.141 | OpenPorts: 22
+[+] Collecting Virtual Networks...
+    [+] VNet: vnet-australiaeast-2 | Subnets: ['snet-australiaeast-1']
+[+] Collecting Network Security Groups...
+    [+] NSG: rafi98-nsg | Group: Discovr-Test | Rules: 1
 
-Discovered Assets (final report):
-+-------------+------------+---------------------+-------+--------------+--------+
-| IP          | Hostname   | OS                  | Ports | Tag          | Risk   |
-+-------------+------------+---------------------+-------+--------------+--------+
-| 20.50.30.10 | azureweb01 | Ubuntu 22.04        | N/A   | [Server]     | Low    |
-| 10.0.0.5    | azuresql01 | Windows Server 2022 | N/A   | [Server]     | Low    |
-| 10.0.0.15   | azuredev01 | Windows 11 Pro      | N/A   | [Workstation]| Low    |
-+-------------+------------+---------------------+-------+--------------+--------+
+══════════════════════════════════════════════════════════════════════
+Resource Group: Discovr-Test (Location: australiaeast)
+Tags: {}
+══════════════════════════════════════════════════════════════════════
 
-[+] 3 cloud assets discovered.
-[+] Total execution time: 8.45 seconds
+Associated Virtual Machines
++--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+--------------+
+| Name   | OS    | Size            | PowerState             | Risk   | OpenPorts   | PrivateIP   | PublicIP      | NIC          | Subnet/VNet                               | Tags         |
++--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+--------------+
+| rafi98 | Linux | Standard_D2s_v4 | PowerState/deallocated | Medium | 22          | 172.18.0.4  | 20.213.12.141 | rafi98634_z2 | snet-australiaeast-1/vnet-australiaeast-2 | {'Test': ''} |
++--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+--------------+
+
+Associated Virtual Networks
++----------------------+-----------------+----------------------+-------+--------+
+| Name                 | Address Space   | Subnets              | DNS   | Risk   |
++----------------------+-----------------+----------------------+-------+--------+
+| vnet-australiaeast-2 | 172.18.0.0/16   | snet-australiaeast-1 | -     | Medium |
++----------------------+-----------------+----------------------+-------+--------+
+
+Associated Network Security Groups
+NSG: rafi98-nsg | Risk: Critical | Rules: 1
++----+--------+-------------+----------+------------+---------+
+|    | Rule   | Direction   | Access   | Protocol   |   Ports |
++----+--------+-------------+----------+------------+---------+
+| ✅  | SSH    | Inbound     | Allow    | TCP        |      22 |
++----+--------+-------------+----------+------------+---------+
+Associated NICs: RAFI98634_Z2
+
+----------------------------------------------------------------------
+Summary for Resource Group 'discovr-test':
+- 1 Virtual Machines (0 High/Critical Risk)
+- 1 Virtual Networks
+- 1 Network Security Groups (1 High/Critical Risk)
+----------------------------------------------------------------------
+```
+### Exported Reports
+```
+~/Documents/discovr_reports/
+   ├── logs/
+   ├── json/
+   │    └── discovr_cloud_<timestamp>.json
+   └── csv/
+        └── azure_<timestamp>/
+             ├── azure_vms_<timestamp>.csv
+             ├── azure_vnets_<timestamp>.csv
+             ├── azure_nsgs_<timestamp>.csv
+             └── azure_summary_<timestamp>.csv
+
 ```
 
 ---
