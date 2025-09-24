@@ -264,10 +264,16 @@ Discovered Assets (final report):
 #### Discovr – Azure Deep Asset Discovery
 
 Discovr now includes **professional Azure deep discovery**, giving you a full summary of your Azure subscription:
-- **Resource Groups**
-- **Virtual Machines** (OS, Size, PowerState, Risk, OpenPorts, IPs, NICs, Subnet/VNet, Tags)
-- **Virtual Networks** (Address space, Subnets, DNS, Risk)
-- **Network Security Groups** (Rules, Associations, Risk)
+- **Resource Groups** → Name, Location, Tags  
+- **Virtual Machines** → OS, Size, PowerState, Risk, OpenPorts, IPs, NIC, Subnet/VNet, Tags, AgentCompatible, AgentVersion  
+- **Virtual Networks** → Address space, Subnets, DNS, Risk  
+- **Network Security Groups** → Rules, Associations, Risk  
+- **Agent Compatibility** → Detects if VM is Azure Agent-compatible (VM Agent installed and reporting)  
+- **Risk Classification** → Based on OS + Open Ports + NSG rules  
+- **Exports**:  
+  - JSON (full nested detail)  
+  - Optimized CSVs (VMs, VNets, NSGs, Summary) under `azure_<timestamp>` folder  
+
 
 Results are shown in a **portal-like terminal output** and exported into **optimized JSON/CSV reports**.
 ```bash
@@ -275,15 +281,23 @@ python -m discovr.cli --cloud azure --subscription 12345678-abcd-1234-efgh-98765
 ```
 Output:
 ```text
-[+] Logs saved at /Users/demo/Documents/discovr_reports/logs/discovr_cloud_log_20250923_164151.log
-[+] Discovering Azure assets in subscription 12345678-abcd-1234-efgh-9876543210ab
+[+] Logs saved at /Users/demo/Documents/discovr_reports/logs/discovr_cloud_log_20250924_125409.log
+[+] Discovering Azure assets in subscription 192a6825-d524-4ba8-a71f-015a3e3a815d
 [+] Collecting Resource Groups...
     [+] RG: Discovr-Test | Location: australiaeast
+    [+] RG: Discovr-Test-0 | Location: australiaeast
+    [+] RG: NetworkWatcherRG | Location: australiaeast
 [+] Collecting Virtual Machines...
-    [+] VM: rafi98 | OS: Linux | Size: Standard_D2s_v4 | PrivateIP: 172.18.0.4 | PublicIP: 20.213.12.141 | OpenPorts: 22
+    [+] VM: test-0 | OS: Linux | Size: Standard_D2s_v3 | PrivateIP: 172.16.0.4 | PublicIP: 40.82.210.102 | OpenPorts: 22,443,80 | AgentCompatible: False | AgentVersion: None
+    [+] VM: test-01 | OS: Linux | Size: Standard_D2s_v3 | PrivateIP: 172.17.0.4 | PublicIP: 20.5.40.34 | OpenPorts: 22 | AgentCompatible: False | AgentVersion: None
+    [+] VM: rafi98 | OS: Linux | Size: Standard_D2s_v4 | PrivateIP: 172.18.0.4 | PublicIP: 20.213.12.141 | OpenPorts: 22 | AgentCompatible: False | AgentVersion: None
 [+] Collecting Virtual Networks...
+    [+] VNet: vnet-australiaeast | Subnets: ['snet-australiaeast-1']
+    [+] VNet: vnet-australiaeast-1 | Subnets: ['snet-australiaeast-1']
     [+] VNet: vnet-australiaeast-2 | Subnets: ['snet-australiaeast-1']
 [+] Collecting Network Security Groups...
+    [+] NSG: test-0-nsg | Group: Discovr-Test-0 | Rules: 3
+    [+] NSG: test-01-nsg | Group: Discovr-Test-0 | Rules: 1
     [+] NSG: rafi98-nsg | Group: Discovr-Test | Rules: 1
 
 ══════════════════════════════════════════════════════════════════════
@@ -292,11 +306,11 @@ Tags: {}
 ══════════════════════════════════════════════════════════════════════
 
 Associated Virtual Machines
-+--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+--------------+
-| Name   | OS    | Size            | PowerState             | Risk   | OpenPorts   | PrivateIP   | PublicIP      | NIC          | Subnet/VNet                               | Tags         |
-+--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+--------------+
-| rafi98 | Linux | Standard_D2s_v4 | PowerState/deallocated | Medium | 22          | 172.18.0.4  | 20.213.12.141 | rafi98634_z2 | snet-australiaeast-1/vnet-australiaeast-2 | {'Test': ''} |
-+--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+--------------+
++--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+-------------------+----------------+--------------+
+| Name   | OS    | Size            | PowerState             | Risk   | OpenPorts   | PrivateIP   | PublicIP      | NIC          | Subnet/VNet                               | AgentCompatible   | AgentVersion   | Tags         |
++--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+-------------------+----------------+--------------+
+| rafi98 | Linux | Standard_D2s_v4 | PowerState/deallocated | Medium | 22          | 172.18.0.4  | 20.213.12.141 | rafi98634_z2 | snet-australiaeast-1/vnet-australiaeast-2 | No                |                | {'Test': ''} |
++--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+-------------------+----------------+--------------+
 
 Associated Virtual Networks
 +----------------------+-----------------+----------------------+-------+--------+
@@ -306,6 +320,7 @@ Associated Virtual Networks
 +----------------------+-----------------+----------------------+-------+--------+
 
 Associated Network Security Groups
+
 NSG: rafi98-nsg | Risk: Critical | Rules: 1
 +----+--------+-------------+----------+------------+---------+
 |    | Rule   | Direction   | Access   | Protocol   |   Ports |
@@ -333,7 +348,6 @@ Summary for Resource Group 'discovr-test':
              ├── azure_vnets_<timestamp>.csv
              ├── azure_nsgs_<timestamp>.csv
              └── azure_summary_<timestamp>.csv
-
 ```
 
 ---

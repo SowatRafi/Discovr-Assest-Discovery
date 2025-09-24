@@ -71,7 +71,7 @@ class Exporter:
                     writer.writerow([
                         "ResourceGroup", "Name", "OS", "Size", "PowerState",
                         "Risk", "OpenPorts", "PrivateIP", "PublicIP",
-                        "NIC", "Subnet", "VNet", "Tags"
+                        "NIC", "Subnet", "VNet", "AgentCompatible", "AgentVersion", "Tags"
                     ])
                     for vm in vms:
                         net = vm.get("Networking", {})
@@ -90,6 +90,8 @@ class Exporter:
                             net.get("NIC", ""),
                             net.get("Subnet", ""),
                             net.get("VNet", ""),
+                            "Yes" if vm.get("AgentCompatible") else "No",
+                            vm.get("AgentVersion", ""),
                             tags_str,
                         ])
                 print(f"[+] Azure VMs CSV saved: {vm_file}")
@@ -225,12 +227,14 @@ class Reporter:
                         vm.get("Networking", {}).get("PublicIP", "N/A"),
                         vm.get("Networking", {}).get("NIC", "N/A"),
                         f"{vm.get('Networking', {}).get('Subnet','N/A')}/{vm.get('Networking', {}).get('VNet','N/A')}",
+                        "Yes" if vm.get("AgentCompatible") else "No",
+                        vm.get("AgentVersion", "N/A"),
                         vm.get("Tags", {}),
                     ]
                     for vm in vms
                 ],
                 headers=["Name", "OS", "Size", "PowerState", "Risk", "OpenPorts",
-                         "PrivateIP", "PublicIP", "NIC", "Subnet/VNet", "Tags"],
+                         "PrivateIP", "PublicIP", "NIC", "Subnet/VNet", "AgentCompatible", "AgentVersion", "Tags"],
                 tablefmt="grid"
             ))
 

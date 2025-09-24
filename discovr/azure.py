@@ -34,11 +34,20 @@ class AzureDiscovery:
         compute_client = ComputeManagementClient(self.credential, self.subscription_id)
         for vm in compute_client.virtual_machines.list_all():
             rg_name = vm.id.split("/")[4]
+
+            # Instance view (for PowerState + Agent)
             vm_details = compute_client.virtual_machines.instance_view(rg_name, vm.name)
             os_type = vm.storage_profile.os_disk.os_type if vm.storage_profile else "Unknown"
             power_state = [
                 s.code for s in vm_details.statuses if "PowerState" in s.code
             ][0] if vm_details and vm_details.statuses else "Unknown"
+
+            # Agent info
+            agent_compatible = False
+            agent_version = None
+            if vm_details and hasattr(vm_details, "vm_agent") and vm_details.vm_agent:
+                agent_compatible = True if vm_details.vm_agent.statuses else False
+                agent_version = vm_details.vm_agent.vm_agent_version
 
             nic_info = {}
             open_ports = set()
@@ -91,6 +100,8 @@ class AzureDiscovery:
                 "OS": os_type,
                 "Size": vm.hardware_profile.vm_size if vm.hardware_profile else "Unknown",
                 "PowerState": power_state,
+                "AgentCompatible": agent_compatible,
+                "AgentVersion": agent_version,
                 "Disks": {
                     "OSDisk": vm.storage_profile.os_disk.name if vm.storage_profile and vm.storage_profile.os_disk else None,
                     "DataDisks": len(vm.storage_profile.data_disks) if vm.storage_profile else 0,
@@ -104,7 +115,8 @@ class AzureDiscovery:
             print(
                 f"    [+] VM: {vm.name} | OS: {os_type} | Size: {vm.hardware_profile.vm_size} "
                 f"| PrivateIP: {nic_info.get('PrivateIP')} | PublicIP: {nic_info.get('PublicIP')} "
-                f"| OpenPorts: {','.join(open_ports) if open_ports else 'None'}"
+                f"| OpenPorts: {','.join(open_ports) if open_ports else 'None'} "
+                f"| AgentCompatible: {agent_compatible} | AgentVersion: {agent_version}"
             )
 
         # --------------------
