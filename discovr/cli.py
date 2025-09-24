@@ -71,7 +71,7 @@ def show_privilege_hint(system, assets):
             print("[!] Please try running again as Administrator on Windows for OS detection and full functionality.")
 
 
-def handle_export(assets, feature, timestamp, args):
+def handle_export(assets, feature, timestamp, args, provider=None):
     """Handle saving results across platforms"""
     if not assets:
         return
@@ -92,11 +92,11 @@ def handle_export(assets, feature, timestamp, args):
 
         if choice in ["yes", "y"]:
             if fmt == "csv":
-                Exporter.save_results(assets, ["csv"], feature, timestamp)
+                Exporter.save_results(assets, ["csv"], feature, timestamp, provider)
             elif fmt == "json":
-                Exporter.save_results(assets, ["json"], feature, timestamp)
+                Exporter.save_results(assets, ["json"], feature, timestamp, provider)
             else:
-                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
+                Exporter.save_results(assets, ["csv", "json"], feature, timestamp, provider)
         else:
             print("[+] Results not saved.")
         return
@@ -109,11 +109,11 @@ def handle_export(assets, feature, timestamp, args):
         elif args.save == "yes":
             fmt = args.format if args.format else "both"
             if fmt == "csv":
-                Exporter.save_results(assets, ["csv"], feature, timestamp)
+                Exporter.save_results(assets, ["csv"], feature, timestamp, provider)
             elif fmt == "json":
-                Exporter.save_results(assets, ["json"], feature, timestamp)
+                Exporter.save_results(assets, ["json"], feature, timestamp, provider)
             else:
-                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
+                Exporter.save_results(assets, ["csv", "json"], feature, timestamp, provider)
             return
 
         # Interactive + timeout
@@ -156,11 +156,11 @@ def handle_export(assets, feature, timestamp, args):
         if choice in ["yes", "y"]:
             fmt = args.format if args.format else "both"
             if fmt == "csv":
-                Exporter.save_results(assets, ["csv"], feature, timestamp)
+                Exporter.save_results(assets, ["csv"], feature, timestamp, provider)
             elif fmt == "json":
-                Exporter.save_results(assets, ["json"], feature, timestamp)
+                Exporter.save_results(assets, ["json"], feature, timestamp, provider)
             else:
-                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
+                Exporter.save_results(assets, ["csv", "json"], feature, timestamp, provider)
         else:
             print("[+] Results not saved.")
 
@@ -176,6 +176,8 @@ def main():
 
     # Cloud
     parser.add_argument("--cloud", choices=["aws", "azure", "gcp"], help="Cloud provider")
+    parser.add_argument("--profile", default="default", help="AWS profile name")
+    parser.add_argument("--region", default="us-east-1", help="Cloud region (e.g. us-east-1)")
     parser.add_argument("--subscription", help="Azure subscription ID")
     parser.add_argument("--project", help="GCP project ID")
     parser.add_argument("--zone", help="GCP zone")
@@ -198,6 +200,7 @@ def main():
     args = parser.parse_args()
 
     assets, feature, timestamp = [], None, None
+    provider = None
 
     try:
         if args.autoipaddr:
@@ -222,8 +225,12 @@ def main():
 
         elif args.cloud:
             feature = "cloud"
+            provider = args.cloud
             log_file, timestamp = Logger.setup(feature)
             if args.cloud == "azure":
+                if not args.subscription:
+                    print("[!] Azure discovery requires --subscription <id>")
+                    sys.exit(1)
                 print(f"[+] Discovering Azure assets in subscription {args.subscription}")
                 scanner = CloudDiscovery("azure", subscription=args.subscription)
                 assets = scanner.run()
@@ -235,7 +242,12 @@ def main():
                 scanner = CloudDiscovery("gcp", project=args.project, zone=args.zone)
                 assets = scanner.run()
             elif args.cloud == "aws":
-                print("[!] AWS discovery not yet implemented")
+                print(
+                    f"[+] Discovering AWS assets in region {args.region} "
+                    f"using profile {args.profile}"
+                )
+                scanner = CloudDiscovery("aws", profile=args.profile, region=args.region)
+                assets = scanner.run()
             Reporter.print_results(assets, len(assets), "cloud assets")
 
         elif args.ad:
@@ -266,7 +278,7 @@ def main():
         sys.exit(1)
 
     if feature and timestamp:
-        handle_export(assets, feature, timestamp, args)
+        handle_export(assets, feature, timestamp, args, provider)
 
 
 if __name__ == "__main__":
