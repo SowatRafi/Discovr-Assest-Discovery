@@ -34,7 +34,7 @@ class Logger:
 
 class Exporter:
     @staticmethod
-    def save_results(assets, formats, feature: str, timestamp: str):
+    def save_results(assets, formats, feature: str, timestamp: str, provider: str | None = None):
         """
         Save assets in JSON and/or CSV.
         Special case: Azure cloud scan exports 4 optimized CSVs inside azure_<timestamp> folder.
@@ -55,7 +55,7 @@ class Exporter:
         # CSV Export
         if "csv" in formats:
             # Special case: Azure Cloud Scan
-            if feature == "cloud":
+            if feature == "cloud" and provider == "azure":
                 azure_dir = csv_dir / f"azure_{timestamp}"
                 azure_dir.mkdir(parents=True, exist_ok=True)
 
@@ -188,18 +188,314 @@ class Reporter:
         tagged_assets = Tagger.tag_assets(assets)
         risked_assets = RiskAssessor.add_risks(tagged_assets)
 
-        # Normalize RG names
-        for a in risked_assets:
-            if a.get("ResourceGroup"):
-                a["ResourceGroup"] = a["ResourceGroup"].lower()
+        if any(asset.get("CloudProvider") == "aws" for asset in risked_assets):
+            Reporter._print_aws_resources(risked_assets)
+            return
 
-        groups = {}
-        for a in risked_assets:
-            rg = a.get("ResourceGroup", a.get("Name", "unknownrg")).lower()
-            groups.setdefault(rg, []).append(a)
+        azure_types = {"resourcegroup", "virtualmachine", "virtualnetwork", "networksecuritygroup"}
+        if any((asset.get("Type") or "").lower() in azure_types for asset in risked_assets):
+            Reporter._print_azure_resources(risked_assets)
+            return
+
+        Reporter._print_generic_assets(risked_assets, context)
+
+    @staticmethod
+    def _print_azure_resources(assets):
+        for asset in assets:
+            if asset.get("ResourceGroup"):
+                asset["ResourceGroup"] = asset["ResourceGroup"].lower()
+
+        groups: dict[str, list[dict]] = {}
+        for asset in assets:
+            rg = asset.get("ResourceGroup", asset.get("Name", "unknownrg")).lower()
+            groups.setdefault(rg, []).append(asset)
 
         for rg, items in groups.items():
             Reporter._print_resource_group(rg, items)
+
+    @staticmethod
+    def _print_generic_assets(assets, context: str):
+        header_line = "═" * 70
+        print(f"\n{header_line}\nAsset Inventory ({context})\n{header_line}")
+
+        header_keys: set[str] = set()
+        normalized_assets: list[dict[str, str]] = []
+
+        for asset in assets:
+            row: dict[str, str] = {}
+            for key, value in asset.items():
+                if key == "CloudProvider":
+                    continue
+                if isinstance(value, list):
+                    row[key] = ";".join(map(str, value))
+                elif isinstance(value, dict):
+                    row[key] = json.dumps(value, default=str)
+                else:
+                    row[key] = str(value)
+
+            row.setdefault("Type", asset.get("Type", "Asset"))
+            row.setdefault("Risk", asset.get("Risk", "Unknown"))
+
+            header_keys.update(row.keys())
+            normalized_assets.append(row)
+
+        headers = sorted(header_keys)
+        if not headers:
+            print("[!] No printable asset fields available.")
+            return
+
+        rows = [[asset.get(header, "") for header in headers] for asset in normalized_assets]
+        print(tabulate(rows, headers=headers, tablefmt="grid"))
+        print("\n" + "-" * 70)
+        print(f"Total assets reported: {len(assets)}")
+        print("-" * 70)
+
+    @staticmethod
+    def _print_aws_resources(assets):
+        header_line = "═" * 70
+        print(f"\n{header_line}\nAWS Asset Inventory\n{header_line}")
+
+        instances = [a for a in assets if a.get("Type") == "EC2Instance"]
+        if instances:
+            print("\nEC2 Instances")
+            print(
+                tabulate(
+                    [
+                        [
+                            inst.get("InstanceId"),
+                            inst.get("Hostname"),
+                            inst.get("PrivateIP"),
+                            inst.get("PublicIP"),
+                            inst.get("State"),
+                            inst.get("InstanceType"),
+                            inst.get("AvailabilityZone"),
+                            inst.get("OS"),
+                            inst.get("Risk"),
+                            inst.get("Ports"),
+                        ]
+                        for inst in instances
+                    ],
+                    headers=[
+                        "InstanceId",
+                        "Name",
+                        "Private IP",
+                        "Public IP",
+                        "State",
+                        "Type",
+                        "AZ",
+                        "OS",
+                        "Risk",
+                        "Ports",
+                    ],
+                    tablefmt="grid",
+                )
+            )
+
+        sgs = [a for a in assets if a.get("Type") == "EC2SecurityGroup"]
+        if sgs:
+            print("\nSecurity Groups")
+            print(
+                tabulate(
+                    [
+                        [
+                            sg.get("GroupId"),
+                            sg.get("GroupName"),
+                            sg.get("VpcId"),
+                            sg.get("InboundRuleCount"),
+                            sg.get("OutboundRuleCount"),
+                            sg.get("InboundPorts"),
+                            sg.get("OutboundPorts"),
+                            sg.get("Risk"),
+                        ]
+                        for sg in sgs
+                    ],
+                    headers=[
+                        "GroupId",
+                        "Name",
+                        "VPC",
+                        "Inbound Rules",
+                        "Outbound Rules",
+                        "Inbound Ports",
+                        "Outbound Ports",
+                        "Risk",
+                    ],
+                    tablefmt="grid",
+                )
+            )
+
+        volumes = [a for a in assets if a.get("Type") == "EBSVolume"]
+        if volumes:
+            print("\nEBS Volumes")
+            print(
+                tabulate(
+                    [
+                        [
+                            vol.get("VolumeId"),
+                            vol.get("State"),
+                            vol.get("SizeGiB"),
+                            vol.get("VolumeType"),
+                            vol.get("AvailabilityZone"),
+                            vol.get("Encrypted"),
+                            vol.get("AttachedInstances"),
+                            vol.get("Risk"),
+                        ]
+                        for vol in volumes
+                    ],
+                    headers=[
+                        "VolumeId",
+                        "State",
+                        "Size (GiB)",
+                        "Type",
+                        "AZ",
+                        "Encrypted",
+                        "Attached",
+                        "Risk",
+                    ],
+                    tablefmt="grid",
+                )
+            )
+
+        eks_clusters = [a for a in assets if a.get("Type") == "EKSCluster"]
+        if eks_clusters:
+            print("\nEKS Clusters")
+            print(
+                tabulate(
+                    [
+                        [
+                            cluster.get("Name"),
+                            cluster.get("Status"),
+                            cluster.get("Version"),
+                            cluster.get("VpcId"),
+                            cluster.get("SubnetIds"),
+                            cluster.get("SecurityGroupIds"),
+                            cluster.get("CreatedAt"),
+                        ]
+                        for cluster in eks_clusters
+                    ],
+                    headers=[
+                        "Cluster",
+                        "Status",
+                        "Version",
+                        "VPC",
+                        "Subnets",
+                        "Security Groups",
+                        "Created",
+                    ],
+                    tablefmt="grid",
+                )
+            )
+
+        rds_instances = [a for a in assets if a.get("Type") == "RDSInstance"]
+        if rds_instances:
+            print("\nRDS Instances")
+            print(
+                tabulate(
+                    [
+                        [
+                            db.get("DBInstanceIdentifier"),
+                            db.get("Engine"),
+                            db.get("EngineVersion"),
+                            db.get("Status"),
+                            db.get("Endpoint"),
+                            db.get("Port"),
+                            db.get("MultiAZ"),
+                            db.get("AllocatedStorage"),
+                            db.get("PubliclyAccessible"),
+                        ]
+                        for db in rds_instances
+                    ],
+                    headers=[
+                        "Identifier",
+                        "Engine",
+                        "Version",
+                        "Status",
+                        "Endpoint",
+                        "Port",
+                        "Multi-AZ",
+                        "Storage (GiB)",
+                        "Public",
+                    ],
+                    tablefmt="grid",
+                )
+            )
+
+        s3_buckets = [a for a in assets if a.get("Type") == "S3Bucket"]
+        if s3_buckets:
+            print("\nS3 Buckets")
+            print(
+                tabulate(
+                    [
+                        [
+                            bucket.get("Name"),
+                            bucket.get("Region"),
+                            bucket.get("CreationDate"),
+                            bucket.get("Versioning"),
+                            bucket.get("Encryption"),
+                            bucket.get("PublicAccess"),
+                        ]
+                        for bucket in s3_buckets
+                    ],
+                    headers=[
+                        "Bucket",
+                        "Region",
+                        "Created",
+                        "Versioning",
+                        "Encryption",
+                        "Public Access",
+                    ],
+                    tablefmt="grid",
+                )
+            )
+
+        iam_users = [a for a in assets if a.get("Type") == "IAMUser"]
+        if iam_users:
+            print("\nIAM Users")
+            print(
+                tabulate(
+                    [
+                        [
+                            user.get("UserName"),
+                            user.get("Arn"),
+                            user.get("CreateDate"),
+                            user.get("PasswordLastUsed"),
+                            user.get("Risk"),
+                        ]
+                        for user in iam_users
+                    ],
+                    headers=["User", "Arn", "Created", "Password Last Used", "Risk"],
+                    tablefmt="grid",
+                )
+            )
+
+        iam_roles = [a for a in assets if a.get("Type") == "IAMRole"]
+        if iam_roles:
+            print("\nIAM Roles")
+            print(
+                tabulate(
+                    [
+                        [
+                            role.get("RoleName"),
+                            role.get("Arn"),
+                            role.get("CreateDate"),
+                            role.get("Path"),
+                            role.get("Risk"),
+                        ]
+                        for role in iam_roles
+                    ],
+                    headers=["Role", "Arn", "Created", "Path", "Risk"],
+                    tablefmt="grid",
+                )
+            )
+
+        total_assets = len(assets)
+        print("\n" + "-" * 70)
+        print(
+            f"Summary: {len(instances)} EC2 instances, {len(sgs)} security groups, "
+            f"{len(volumes)} EBS volumes, {len(eks_clusters)} EKS clusters, {len(rds_instances)} RDS instances, "
+            f"{len(s3_buckets)} S3 buckets, {len(iam_users)} IAM users, {len(iam_roles)} IAM roles"
+        )
+        print(f"Total AWS assets reported: {total_assets}")
+        print("-" * 70)
 
     @staticmethod
     def _print_resource_group(rg_name, items):

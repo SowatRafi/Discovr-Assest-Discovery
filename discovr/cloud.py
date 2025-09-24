@@ -1,6 +1,6 @@
 from discovr.azure import AzureDiscovery
+from discovr.aws import AWSDiscovery
 from discovr.gcp import GCPDiscovery
-# from discovr.aws import AWSDiscovery  # Placeholder if AWS logic is split into its own module
 
 
 class CloudDiscovery:
@@ -38,8 +38,8 @@ class CloudDiscovery:
             return gcp_scanner.run()
 
         elif self.provider == "aws":
-            # Future expansion: move AWS-specific discovery here
-            raise NotImplementedError("AWS discovery not yet separated into its own module")
+            aws_scanner = AWSDiscovery(profile=self.profile, region=self.region)
+            return aws_scanner.run()
 
         else:
             raise Exception(f"Unsupported cloud provider: {self.provider}")
