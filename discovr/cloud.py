@@ -4,7 +4,17 @@ from discovr.gcp import GCPDiscovery
 
 
 class CloudDiscovery:
-    def __init__(self, provider, profile=None, region=None, subscription=None, project=None, zone=None):
+    def __init__(
+        self,
+        provider,
+        profile=None,
+        region=None,
+        subscription=None,
+        project=None,
+        zone=None,
+        gcp_credentials=None,
+        force_python_proto=True,
+    ):
         """
         Initialize the Cloud Discovery dispatcher.
         :param provider: "aws", "azure", "gcp"
@@ -20,6 +30,8 @@ class CloudDiscovery:
         self.subscription = subscription
         self.project = project
         self.zone = zone
+        self.gcp_credentials = gcp_credentials
+        self.force_python_proto = force_python_proto
 
     def run(self):
         """
@@ -34,7 +46,12 @@ class CloudDiscovery:
         elif self.provider == "gcp":
             if not self.project or not self.zone:
                 raise Exception("GCP discovery requires --project and --zone")
-            gcp_scanner = GCPDiscovery(self.project, self.zone)
+            gcp_scanner = GCPDiscovery(
+                self.project,
+                self.zone,
+                credentials_path=self.gcp_credentials,
+                force_python_proto=self.force_python_proto,
+            )
             return gcp_scanner.run()
 
         elif self.provider == "aws":
