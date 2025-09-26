@@ -2,36 +2,27 @@ import logging
 import platform
 from scapy.all import sniff, ARP, DNS, DNSQR, BOOTP, DHCP, UDP, get_if_list
 
-# Windows-only helper for friendly names
 try:
     from scapy.arch.windows import get_windows_if_list
-except ImportError:
+except ImportError:  # pragma: no cover - optional dependency
     get_windows_if_list = None
 
 
 class PassiveDiscovery:
+    """Passive packet capture for network asset discovery."""
+
     def __init__(self, iface=None, count=0, timeout=180):
-        """
-        :param iface: Network interface
-            - Linux/Mac: 'eth0', 'wlan0', 'en0'
-            - Windows: friendly name (e.g., 'Wi-Fi', 'Ethernet')
-        :param count: Number of packets to capture (0 = unlimited until timeout/Ctrl+C)
-        :param timeout: Duration in seconds (default: 180 = 3 minutes)
-        """
         self.iface = iface
         self.count = count
         self.timeout = timeout
         self.assets = {}
 
     def _list_interfaces(self):
-        """Return list of interfaces cross-platform."""
         if platform.system() == "Windows" and get_windows_if_list:
             return get_windows_if_list()
-        else:
-            return get_if_list()
+        return get_if_list()
 
     def _select_iface(self):
-        """Interactive interface selection if none is provided."""
         ifaces = self._list_interfaces()
         print("[+] Available interfaces:")
 
@@ -62,21 +53,14 @@ class PassiveDiscovery:
     def _process_packet(self, packet):
         ip, hostname = None, None
 
-        # ARP packets (discover IP ↔ MAC mappings)
         if packet.haslayer(ARP) and packet[ARP].psrc:
             ip = packet[ARP].psrc
             hostname = f"MAC-{packet[ARP].hwsrc}"
-
-        # DNS queries
         elif packet.haslayer(DNS) and packet.haslayer(DNSQR):
             hostname = packet[DNSQR].qname.decode("utf-8") if packet[DNSQR].qname else None
-
-        # DHCP traffic (devices asking for IPs)
         elif packet.haslayer(BOOTP) and packet.haslayer(DHCP):
             ip = packet[BOOTP].yiaddr if packet[BOOTP].yiaddr != "0.0.0.0" else None
             hostname = f"DHCP-{packet[BOOTP].chaddr.hex()}"
-
-        # mDNS traffic (multicast DNS — IoT, printers, smart TVs)
         elif packet.haslayer(UDP) and packet[UDP].dport == 5353 and packet.haslayer(DNSQR):
             hostname = packet[DNSQR].qname.decode("utf-8") if packet[DNSQR].qname else "mDNS-device"
 
@@ -87,7 +71,7 @@ class PassiveDiscovery:
                     "IP": ip or "N/A",
                     "Hostname": hostname or "Unknown",
                     "OS": "Unknown",
-                    "Ports": "N/A"
+                    "Ports": "N/A",
                 }
                 logging.info(
                     f"    [+] Passive Discovery Found: {self.assets[key]['IP']} ({self.assets[key]['Hostname']})"
@@ -100,7 +84,9 @@ class PassiveDiscovery:
                 return [], 0
 
         print(f"[+] Starting passive discovery on interface: {self.iface}")
-        print(f"[+] Listening for ARP, DNS, DHCP, and mDNS traffic (auto-stop after {self.timeout} seconds or Ctrl+C)...\n")
+        print(
+            f"[+] Listening for ARP, DNS, DHCP, and mDNS traffic (auto-stop after {self.timeout} seconds or Ctrl+C)...\n"
+        )
 
         try:
             sniff(
@@ -108,7 +94,7 @@ class PassiveDiscovery:
                 iface=self.iface,
                 count=self.count,
                 timeout=self.timeout,
-                store=0
+                store=0,
             )
         except KeyboardInterrupt:
             print("\n[+] Stopping passive discovery...")

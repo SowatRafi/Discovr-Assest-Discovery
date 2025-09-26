@@ -5,18 +5,20 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     import nmap
     nmap_available = True
-except ImportError:
+except ImportError:  # pragma: no cover - optional dependency
     nmap_available = False
 
 
 class NetworkDiscovery:
+    """Active network scanner wrapper around python-nmap."""
+
     def __init__(self, network_range, ports=None, parallel=1):
         self.network_range = network_range
         self.ports = ports
         self.parallel = max(1, parallel)
 
     def _scan_host(self, host):
-        """Scan a single host with Nmap"""
+        """Scan a single host with Nmap."""
         nm = nmap.PortScanner()
         arguments = "-O -T4"
         if self.ports:
@@ -24,8 +26,8 @@ class NetworkDiscovery:
 
         try:
             nm.scan(hosts=host, arguments=arguments)
-        except Exception as e:
-            logging.error(f"[!] Nmap scan failed for {host}: {e}")
+        except Exception as exc:
+            logging.error(f"[!] Nmap scan failed for {host}: {exc}")
             return None
 
         assets = []
@@ -33,13 +35,13 @@ class NetworkDiscovery:
             hostname = nm[scanned_host].hostname() or "Unknown"
             os_name = "Unknown"
 
-            if not self.ports and 'osmatch' in nm[scanned_host] and nm[scanned_host]['osmatch']:
-                os_name = nm[scanned_host]['osmatch'][0]['name']
+            if not self.ports and "osmatch" in nm[scanned_host] and nm[scanned_host]["osmatch"]:
+                os_name = nm[scanned_host]["osmatch"][0]["name"]
 
             open_ports = []
-            if 'tcp' in nm[scanned_host]:
-                for port, port_data in nm[scanned_host]['tcp'].items():
-                    if port_data['state'] == 'open':
+            if "tcp" in nm[scanned_host]:
+                for port, port_data in nm[scanned_host]["tcp"].items():
+                    if port_data["state"] == "open":
                         open_ports.append(str(port))
 
             if os_name == "Unknown" and open_ports:
@@ -52,12 +54,13 @@ class NetworkDiscovery:
                 "IP": scanned_host,
                 "Hostname": hostname,
                 "OS": os_name,
-                "Ports": ",".join(open_ports) if open_ports else "None"
+                "Ports": ",".join(open_ports) if open_ports else "None",
             }
             logging.info(
                 f"    [+] Found: {asset['IP']} ({asset['Hostname']}) | OS: {asset['OS']} | Ports: {asset['Ports']}"
             )
             assets.append(asset)
+
         return assets
 
     def run(self):
@@ -70,8 +73,8 @@ class NetworkDiscovery:
 
         try:
             all_hosts = [str(ip) for ip in ipaddress.IPv4Network(self.network_range, strict=False)]
-        except Exception as e:
-            print(f"[!] Invalid network range: {e}")
+        except Exception as exc:
+            print(f"[!] Invalid network range: {exc}")
             return [], 0, 0
 
         assets = []
