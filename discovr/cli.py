@@ -181,6 +181,15 @@ def main():
     parser.add_argument("--subscription", help="Azure subscription ID")
     parser.add_argument("--project", help="GCP project ID")
     parser.add_argument("--zone", help="GCP zone")
+    parser.add_argument(
+        "--gcp-credentials",
+        help="Path to a GCP Application Default Credentials JSON file",
+    )
+    parser.add_argument(
+        "--gcp-disable-python-protobuf",
+        action="store_true",
+        help="Opt-out of forcing the pure Python protobuf implementation for GCP discovery",
+    )
 
     # Active Directory
     parser.add_argument("--ad", action="store_true", help="Active Directory discovery")
@@ -239,7 +248,13 @@ def main():
                     print("[!] GCP requires --project and --zone")
                     sys.exit(1)
                 print(f"[+] Discovering GCP assets in project {args.project}, zone {args.zone}")
-                scanner = CloudDiscovery("gcp", project=args.project, zone=args.zone)
+                scanner = CloudDiscovery(
+                    "gcp",
+                    project=args.project,
+                    zone=args.zone,
+                    gcp_credentials=args.gcp_credentials,
+                    force_python_proto=not args.gcp_disable_python_protobuf,
+                )
                 assets = scanner.run()
             elif args.cloud == "aws":
                 print(
