@@ -4,10 +4,16 @@ import csv
 import json
 from datetime import datetime
 from tabulate import tabulate
+from typing import Optional
+
 from discovr.tagger import Tagger
 from discovr.risk import RiskAssessor
 from discovr.azure.exporter import AzureExporter
 from discovr.azure.reporter import AzureReporter
+from discovr.aws.exporter import AWSExporter
+from discovr.aws.reporter import AWSReporter
+from discovr.gcp.exporter import GCPExporter
+from discovr.gcp.reporter import GCPReporter
 
 
 class Logger:
@@ -29,7 +35,7 @@ class Logger:
 
 class Exporter:
     @staticmethod
-    def save_results(assets, formats, feature: str, timestamp: str):
+    def save_results(assets, formats, feature: str, timestamp: str, provider: Optional[str] = None):
         base_path = Path.home() / "Documents" / "discovr_reports"
         csv_dir = base_path / "csv"
         json_dir = base_path / "json"
@@ -44,49 +50,73 @@ class Exporter:
 
         if "csv" in formats:
             if feature == "cloud":
-                AzureExporter.export(assets, timestamp, csv_dir)
+                provider_key = (provider or "").lower()
+                if provider_key == "azure":
+                    AzureExporter.export(assets, timestamp, csv_dir)
+                elif provider_key == "aws":
+                    AWSExporter.export(assets, timestamp, csv_dir)
+                elif provider_key == "gcp":
+                    GCPExporter.export(assets, timestamp, csv_dir)
+                else:
+                    # Fallback to legacy single CSV export
+                    csv_file = csv_dir / f"discovr_{feature}_{timestamp}.csv"
+                    Exporter._write_flat_csv(csv_file, assets)
+                    print(f"[+] CSV saved: {csv_file}")
             else:
                 csv_file = csv_dir / f"discovr_{feature}_{timestamp}.csv"
+                Exporter._write_flat_csv(csv_file, assets)
+                print(f"[+] CSV saved: {csv_file}")
 
-                def flatten_dict(d, parent_key="", sep="."):
-                    items = []
-                    for k, v in d.items():
-                        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-                        if isinstance(v, dict):
-                            items.extend(flatten_dict(v, new_key, sep=sep).items())
-                        elif isinstance(v, list):
-                            items.append((new_key, ";".join(map(str, v))))
-                        else:
-                            items.append((new_key, v))
-                    return dict(items)
+    @staticmethod
+    def _write_flat_csv(csv_file: Path, assets):
+        def flatten_dict(d, parent_key="", sep="."):
+            items = []
+            for k, v in d.items():
+                new_key = f"{parent_key}{sep}{k}" if parent_key else k
+                if isinstance(v, dict):
+                    items.extend(flatten_dict(v, new_key, sep=sep).items())
+                elif isinstance(v, list):
+                    items.append((new_key, ";".join(map(str, v))))
+                else:
+                    items.append((new_key, v))
+            return dict(items)
 
-                flat_assets = [flatten_dict(a) for a in assets]
-                if flat_assets:
-                    headers = sorted({key for a in flat_assets for key in a.keys()})
-                    with open(csv_file, "w", newline="", encoding="utf-8") as f:
-                        writer = csv.DictWriter(f, fieldnames=headers)
-                        writer.writeheader()
-                        for a in flat_assets:
-                            writer.writerow(a)
-                    print(f"[+] CSV saved: {csv_file}")
+        flat_assets = [flatten_dict(a) for a in assets]
+        if not flat_assets:
+            return
+
+        headers = sorted({key for a in flat_assets for key in a.keys()})
+        with open(csv_file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=headers)
+            writer.writeheader()
+            for a in flat_assets:
+                writer.writerow(a)
 
 
 class Reporter:
     @staticmethod
-    def print_results(assets, total_hosts, context="assets", feature: str = None):
+    def print_results(assets, total_hosts, context="assets", feature: str = None, provider: Optional[str] = None):
         if not assets:
             print("\n[!] No assets discovered.")
             return
         tagged_assets = Tagger.tag_assets(assets)
         risked_assets = RiskAssessor.add_risks(tagged_assets)
         if feature == "cloud":
-            groups = {}
-            for a in risked_assets:
-                if a.get("ResourceGroup"):
-                    a["ResourceGroup"] = a["ResourceGroup"].lower()
-                rg = a.get("ResourceGroup", a.get("Name", "unknownrg")).lower()
-                groups.setdefault(rg, []).append(a)
-            AzureReporter.print_summary(groups)
+            provider_key = (provider or "").lower()
+            if provider_key == "azure":
+                groups = {}
+                for a in risked_assets:
+                    if a.get("ResourceGroup"):
+                        a["ResourceGroup"] = a["ResourceGroup"].lower()
+                    rg = a.get("ResourceGroup", a.get("Name", "unknownrg")).lower()
+                    groups.setdefault(rg, []).append(a)
+                AzureReporter.print_summary(groups)
+            elif provider_key == "aws":
+                AWSReporter.print_summary(risked_assets)
+            elif provider_key == "gcp":
+                GCPReporter.print_summary(risked_assets)
+            else:
+                Reporter._print_tabular(risked_assets, total_hosts, context)
         else:
             Reporter._print_tabular(risked_assets, total_hosts, context)
 

@@ -46,7 +46,7 @@ def detect_local_subnet():
         sys.exit(1)
 
 
-def handle_export(assets, feature, timestamp, args):
+def handle_export(assets, feature, timestamp, args, provider=None):
     if not assets:
         return
     system = platform.system()
@@ -55,11 +55,11 @@ def handle_export(assets, feature, timestamp, args):
         fmt = args.format if args.format else "both"
         if choice in ["yes", "y"]:
             if fmt == "csv":
-                Exporter.save_results(assets, ["csv"], feature, timestamp)
+                Exporter.save_results(assets, ["csv"], feature, timestamp, provider)
             elif fmt == "json":
-                Exporter.save_results(assets, ["json"], feature, timestamp)
+                Exporter.save_results(assets, ["json"], feature, timestamp, provider)
             else:
-                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
+                Exporter.save_results(assets, ["csv", "json"], feature, timestamp, provider)
         else:
             print("[+] Results not saved.")
         return
@@ -70,11 +70,11 @@ def handle_export(assets, feature, timestamp, args):
         elif args.save == "yes":
             fmt = args.format if args.format else "both"
             if fmt == "csv":
-                Exporter.save_results(assets, ["csv"], feature, timestamp)
+                Exporter.save_results(assets, ["csv"], feature, timestamp, provider)
             elif fmt == "json":
-                Exporter.save_results(assets, ["json"], feature, timestamp)
+                Exporter.save_results(assets, ["json"], feature, timestamp, provider)
             else:
-                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
+                Exporter.save_results(assets, ["csv", "json"], feature, timestamp, provider)
             return
 
 
@@ -88,6 +88,8 @@ def main():
     parser.add_argument("--subscription", help="Azure subscription ID")
     parser.add_argument("--project", help="GCP project ID")
     parser.add_argument("--zone", help="GCP zone")
+    parser.add_argument("--profile", help="AWS profile name", default="default")
+    parser.add_argument("--region", help="AWS region (e.g., us-east-1)")
     parser.add_argument("--ad", action="store_true", help="Active Directory discovery")
     parser.add_argument("--domain", help="AD domain")
     parser.add_argument("--username", help="AD username")
@@ -100,6 +102,7 @@ def main():
     args = parser.parse_args()
 
     assets, feature, timestamp = [], None, None
+    cloud_provider = None
 
     try:
         if args.autoipaddr:
@@ -122,9 +125,14 @@ def main():
 
         elif args.cloud:
             feature = "cloud"
+            cloud_provider = args.cloud
             log_file, timestamp = Logger.setup(feature)
             if args.cloud == "azure":
+                if not args.subscription:
+                    print("[!] Azure discovery requires --subscription")
+                    sys.exit(1)
                 from discovr.azure.discovery import AzureDiscovery
+
                 print(f"[+] Discovering Azure assets in subscription {args.subscription}")
                 scanner = AzureDiscovery(args.subscription)
                 assets = scanner.run()
@@ -132,12 +140,22 @@ def main():
                 if not args.project or not args.zone:
                     print("[!] GCP requires --project and --zone")
                     sys.exit(1)
-                print(f"[+] Discovering GCP assets in project {args.project}, zone {args.zone}")
+                print(f"[+] Discovering GCP assets in project {args.project} (zone: {args.zone})")
                 scanner = CloudDiscovery("gcp", project=args.project, zone=args.zone)
                 assets = scanner.run()
             elif args.cloud == "aws":
-                print("[!] AWS discovery not yet implemented")
-            Reporter.print_results(assets, len(assets), "cloud assets", feature)
+                profile = args.profile or "default"
+                region = args.region
+                if region:
+                    print(f"[+] Discovering AWS assets (profile: {profile}, region: {region})")
+                else:
+                    print(f"[+] Discovering AWS assets (profile: {profile})")
+                scanner = CloudDiscovery("aws", profile=profile, region=region)
+                assets = scanner.run()
+            else:
+                print(f"[!] Unsupported cloud provider: {args.cloud}")
+                sys.exit(1)
+            Reporter.print_results(assets, len(assets), "cloud assets", feature, provider=cloud_provider)
 
         elif args.ad:
             feature = "ad"
@@ -167,7 +185,7 @@ def main():
         sys.exit(1)
 
     if feature and timestamp:
-        handle_export(assets, feature, timestamp, args)
+        handle_export(assets, feature, timestamp, args, provider=cloud_provider)
 
 
 if __name__ == "__main__":

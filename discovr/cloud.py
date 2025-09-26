@@ -18,11 +18,17 @@ def CloudDiscovery(provider, **kwargs):
     """
     if provider == "gcp":
         from discovr.gcp import GCPDiscovery
+
         return GCPDiscovery(kwargs.get("project"), kwargs.get("zone"))
 
-    elif provider == "aws":
-        # Placeholder for AWS discovery implementation
-        raise NotImplementedError("AWS discovery not yet implemented")
+    if provider == "aws":
+        from discovr.aws import AWSDiscovery
+
+        return AWSDiscovery(
+            profile=kwargs.get("profile"),
+            region=kwargs.get("region"),
+            session=kwargs.get("session"),
+        )
 
     else:
         raise ValueError(f"Unsupported cloud provider: {provider}")
