@@ -354,7 +354,8 @@ Summary for Resource Group 'discovr-test':
 
 ### 3. GCP Discovery (`--cloud gcp --project --zone`)
 ```bash
-python -m discovr.cli --cloud gcp --project my-gcp-project --zone us-central1-a
+# python -m discovr.cli --cloud gcp --project my-gcp-project --zone us-central1-a
+python -m discovr.cli --cloud gcp --project my-gcp-project --zone australia-southeast2-a --gcp-credentials ~/Downloads/discovr-473200.json
 ```
 Output:
 ```text
