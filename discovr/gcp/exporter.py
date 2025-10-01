@@ -16,6 +16,8 @@ class GCPExporter:
         global_addresses: List[Dict[str, Any]] = []
         regional_forwarding: List[Dict[str, Any]] = []
         global_forwarding: List[Dict[str, Any]] = []
+        disks: List[Dict[str, Any]] = []
+        images: List[Dict[str, Any]] = []
 
         for asset in assets:
             asset_type = asset.get("Type")
@@ -33,6 +35,10 @@ class GCPExporter:
                 regional_forwarding.append(asset)
             elif asset_type == "GlobalForwardingRule":
                 global_forwarding.append(asset)
+            elif asset_type == "PersistentDisk":
+                disks.append(asset)
+            elif asset_type == "Image":
+                images.append(asset)
 
         if instances:
             path = gcp_dir / f"gcp_instances_{timestamp}.csv"
@@ -153,6 +159,44 @@ class GCPExporter:
             )
             print(f"[+] GCP Forwarding Rules CSV saved: {path}")
 
+        if disks:
+            path = gcp_dir / f"gcp_disks_{timestamp}.csv"
+            GCPExporter._write_csv(
+                path,
+                ["Project", "Zone", "Name", "SizeGb", "DiskType", "Status", "Users"],
+                [
+                    [
+                        disk.get("Project", ""),
+                        disk.get("Zone", ""),
+                        disk.get("Name", ""),
+                        disk.get("SizeGb", ""),
+                        disk.get("DiskType", ""),
+                        disk.get("Status", ""),
+                        ";".join(disk.get("Users", [])),
+                    ]
+                    for disk in disks
+                ],
+            )
+            print(f"[+] GCP Disks CSV saved: {path}")
+
+        if images:
+            path = gcp_dir / f"gcp_images_{timestamp}.csv"
+            GCPExporter._write_csv(
+                path,
+                ["Project", "Name", "Status", "DiskSizeGb", "Family"],
+                [
+                    [
+                        image.get("Project", ""),
+                        image.get("Name", ""),
+                        image.get("Status", ""),
+                        image.get("DiskSizeGb", ""),
+                        image.get("Family", ""),
+                    ]
+                    for image in images
+                ],
+            )
+            print(f"[+] GCP Images CSV saved: {path}")
+
         summary_path = gcp_dir / f"gcp_summary_{timestamp}.csv"
         summary_rows = GCPExporter._build_summary(
             instances,
@@ -162,6 +206,8 @@ class GCPExporter:
             global_addresses,
             regional_forwarding,
             global_forwarding,
+            disks,
+            images,
         )
         GCPExporter._write_csv(
             summary_path,
@@ -170,6 +216,8 @@ class GCPExporter:
                 "Instances",
                 "Networks",
                 "Firewalls",
+                "Disks",
+                "Images",
                 "RegionalAddresses",
                 "GlobalAddresses",
                 "RegionalForwarding",
@@ -201,6 +249,8 @@ class GCPExporter:
         global_addresses: List[Dict[str, Any]],
         regional_forwarding: List[Dict[str, Any]],
         global_forwarding: List[Dict[str, Any]],
+        disks: List[Dict[str, Any]],
+        images: List[Dict[str, Any]],
     ) -> List[List[Any]]:
         projects: Dict[str, Dict[str, int]] = {}
 
@@ -222,6 +272,10 @@ class GCPExporter:
             inc(rule.get("Project", "unknown"), "RegionalForwarding")
         for rule in global_forwarding:
             inc(rule.get("Project", "unknown"), "GlobalForwarding")
+        for disk in disks:
+            inc(disk.get("Project", "unknown"), "Disks")
+        for image in images:
+            inc(image.get("Project", "unknown"), "Images")
 
         rows: List[List[Any]] = []
         for project, counters in sorted(projects.items()):
@@ -230,6 +284,8 @@ class GCPExporter:
                 counters.get("Instances", 0),
                 counters.get("Networks", 0),
                 counters.get("Firewalls", 0),
+                counters.get("Disks", 0),
+                counters.get("Images", 0),
                 counters.get("RegionalAddresses", 0),
                 counters.get("GlobalAddresses", 0),
                 counters.get("RegionalForwarding", 0),

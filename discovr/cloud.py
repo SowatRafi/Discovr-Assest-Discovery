@@ -19,7 +19,11 @@ def CloudDiscovery(provider, **kwargs):
     if provider == "gcp":
         from discovr.gcp import GCPDiscovery
 
-        return GCPDiscovery(kwargs.get("project"), kwargs.get("zone"))
+        return GCPDiscovery(
+            project=kwargs.get("project"),
+            zone=kwargs.get("zone"),
+            credentials_file=kwargs.get("credentials_file"),
+        )
 
     if provider == "aws":
         from discovr.aws import AWSDiscovery

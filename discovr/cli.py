@@ -88,6 +88,7 @@ def main():
     parser.add_argument("--subscription", help="Azure subscription ID")
     parser.add_argument("--project", help="GCP project ID")
     parser.add_argument("--zone", help="GCP zone")
+    parser.add_argument("--gcp-credentials", help="Path to GCP service account JSON")
     parser.add_argument("--profile", help="AWS profile name", default="default")
     parser.add_argument("--region", help="AWS region (e.g., us-east-1)")
     parser.add_argument("--ad", action="store_true", help="Active Directory discovery")
@@ -141,7 +142,12 @@ def main():
                     print("[!] GCP requires --project and --zone")
                     sys.exit(1)
                 print(f"[+] Discovering GCP assets in project {args.project} (zone: {args.zone})")
-                scanner = CloudDiscovery("gcp", project=args.project, zone=args.zone)
+                scanner = CloudDiscovery(
+                    "gcp",
+                    project=args.project,
+                    zone=args.zone,
+                    credentials_file=args.gcp_credentials,
+                )
                 assets = scanner.run()
             elif args.cloud == "aws":
                 profile = args.profile or "default"

@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['discovr\\cli.py'],
+    ['discovr/cli.py'],
     pathex=[],
     binaries=[],
     datas=[],

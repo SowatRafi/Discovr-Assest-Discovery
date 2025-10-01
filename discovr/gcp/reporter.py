@@ -75,6 +75,46 @@ class GCPReporter:
                     )
                 )
 
+            disks = [a for a in items if a.get("Type") == "PersistentDisk"]
+            if disks:
+                print("\nPersistent Disks")
+                print(
+                    tabulate(
+                        [
+                            [
+                                disk.get("Name", ""),
+                                disk.get("Zone", ""),
+                                disk.get("SizeGb", ""),
+                                disk.get("DiskType", ""),
+                                disk.get("Status", ""),
+                                ";".join(disk.get("Users", [])),
+                            ]
+                            for disk in disks
+                        ],
+                        headers=["Name", "Zone", "SizeGb", "DiskType", "Status", "Users"],
+                        tablefmt="grid",
+                    )
+                )
+
+            images = [a for a in items if a.get("Type") == "Image"]
+            if images:
+                print("\nImages")
+                print(
+                    tabulate(
+                        [
+                            [
+                                image.get("Name", ""),
+                                image.get("Status", ""),
+                                image.get("DiskSizeGb", ""),
+                                image.get("Family", ""),
+                            ]
+                            for image in images
+                        ],
+                        headers=["Name", "Status", "DiskSizeGb", "Family"],
+                        tablefmt="grid",
+                    )
+                )
+
             addresses = [a for a in items if a.get("Type") in {"RegionalAddress", "GlobalAddress"}]
             if addresses:
                 print("\nReserved Addresses")
@@ -121,6 +161,8 @@ class GCPReporter:
                 "Instances": len(instances),
                 "Networks": len(networks),
                 "Firewalls": len(firewalls),
+                "Disks": len(disks),
+                "Images": len(images),
                 "Addresses": len(addresses),
                 "ForwardingRules": len(forwarding),
             }
