@@ -32,6 +32,9 @@ def CloudDiscovery(provider, **kwargs):
             profile=kwargs.get("profile"),
             region=kwargs.get("region"),
             session=kwargs.get("session"),
+            access_key=kwargs.get("access_key"),
+            secret_key=kwargs.get("secret_key"),
+            session_token=kwargs.get("session_token"),
         )
 
     else:

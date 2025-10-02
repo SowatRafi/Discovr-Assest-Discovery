@@ -91,6 +91,12 @@ def main():
     parser.add_argument("--gcp-credentials", help="Path to GCP service account JSON")
     parser.add_argument("--profile", help="AWS profile name", default="default")
     parser.add_argument("--region", help="AWS region (e.g., us-east-1)")
+    parser.add_argument("--aws-access-key", help="AWS access key ID")
+    parser.add_argument("--aws-secret-key", help="AWS secret access key")
+    parser.add_argument("--aws-session-token", help="AWS session token")
+    parser.add_argument("--azure-tenant", help="Azure tenant ID")
+    parser.add_argument("--azure-client-id", help="Azure client ID")
+    parser.add_argument("--azure-client-secret", help="Azure client secret")
     parser.add_argument("--ad", action="store_true", help="Active Directory discovery")
     parser.add_argument("--domain", help="AD domain")
     parser.add_argument("--username", help="AD username")
@@ -129,13 +135,54 @@ def main():
             cloud_provider = args.cloud
             log_file, timestamp = Logger.setup(feature)
             if args.cloud == "azure":
-                if not args.subscription:
-                    print("[!] Azure discovery requires --subscription")
-                    sys.exit(1)
                 from discovr.azure.discovery import AzureDiscovery
 
-                print(f"[+] Discovering Azure assets in subscription {args.subscription}")
-                scanner = AzureDiscovery(args.subscription)
+                credential, tenant_id, client_id, client_secret = AzureDiscovery.obtain_credential(
+                    args.azure_tenant, args.azure_client_id, args.azure_client_secret
+                )
+
+                subscription_id = args.subscription
+                if not subscription_id:
+                    try:
+                        from azure.mgmt.resource import SubscriptionClient
+
+                        sub_client = SubscriptionClient(credential)
+                        subscriptions = list(sub_client.subscriptions.list())
+                    except Exception as exc:
+                        print(f"[!] Failed to enumerate Azure subscriptions automatically: {exc}")
+                        subscriptions = []
+
+                    if not subscriptions:
+                        subscription_id = input("Azure subscription ID: ").strip()
+                        if not subscription_id:
+                            print("[!] Azure discovery requires a subscription ID.")
+                            sys.exit(1)
+                    elif len(subscriptions) == 1:
+                        subscription_id = subscriptions[0].subscription_id
+                        print(f"[+] Using detected subscription {subscription_id}")
+                    else:
+                        print("[+] Multiple Azure subscriptions detected:")
+                        for idx, sub in enumerate(subscriptions, start=1):
+                            name = getattr(sub, "display_name", "unknown")
+                            print(f"    [{idx}] {name} ({sub.subscription_id})")
+                        choice = input(f"Select subscription [1-{len(subscriptions)}] (default 1): ").strip()
+                        try:
+                            index = int(choice) - 1 if choice else 0
+                            if not (0 <= index < len(subscriptions)):
+                                raise ValueError
+                        except ValueError:
+                            index = 0
+                        subscription_id = subscriptions[index].subscription_id
+                        print(f"[+] Using subscription {subscription_id}")
+
+                print(f"[+] Discovering Azure assets in subscription {subscription_id}")
+                scanner = AzureDiscovery(
+                    subscription_id=subscription_id,
+                    tenant_id=tenant_id,
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    credential=credential,
+                )
                 assets = scanner.run()
             elif args.cloud == "gcp":
                 if not args.project or not args.zone:
@@ -156,7 +203,14 @@ def main():
                     print(f"[+] Discovering AWS assets (profile: {profile}, region: {region})")
                 else:
                     print(f"[+] Discovering AWS assets (profile: {profile})")
-                scanner = CloudDiscovery("aws", profile=profile, region=region)
+                scanner = CloudDiscovery(
+                    "aws",
+                    profile=profile,
+                    region=region,
+                    access_key=args.aws_access_key,
+                    secret_key=args.aws_secret_key,
+                    session_token=args.aws_session_token,
+                )
                 assets = scanner.run()
             else:
                 print(f"[!] Unsupported cloud provider: {args.cloud}")

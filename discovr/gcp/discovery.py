@@ -249,44 +249,63 @@ class GCPDiscovery:
         if self._client_kwargs is not None:
             return True
 
-        credentials = None
+        attempts = 0
+        while attempts < 2:
+            credentials = None
 
-        if self.credentials_file:
-            cred_path = Path(self.credentials_file)
-            if not cred_path.exists():
-                logging.error(f"[!] GCP credentials file not found: {self.credentials_file}")
-                return False
-            if service_account is None:
-                logging.error("[!] google-auth package missing. Run: pip install google-auth")
-                return False
-            try:
-                credentials = service_account.Credentials.from_service_account_file(
-                    self.credentials_file,
-                    scopes=SCOPES,
-                )
-            except Exception as exc:
-                logging.error(f"[!] Failed to load GCP service account credentials: {exc}")
-                return False
-        else:
-            if google_auth_default is None:
-                logging.error("[!] google-auth package missing. Run: pip install google-auth")
-                return False
-            try:
-                credentials, detected_project = google_auth_default(scopes=SCOPES)
-                if not self.project and detected_project:
-                    self.project = detected_project
-            except DefaultCredentialsError as exc:  # type: ignore[arg-type]
-                logging.error(
-                    "[!] Unable to locate GCP Application Default Credentials. Provide a service "
-                    "account JSON with --gcp-credentials, set GOOGLE_APPLICATION_CREDENTIALS, or "
-                    "run `gcloud auth application-default login`."
-                )
-                logging.debug(f"GCP credential resolution error: {exc}")
-                return False
+            if self.credentials_file:
+                cred_path = Path(self.credentials_file)
+                if not cred_path.exists():
+                    logging.error(f"[!] GCP credentials file not found: {self.credentials_file}")
+                    prompt = input("Enter path to GCP service account JSON (blank to cancel): ").strip()
+                    if prompt:
+                        self.credentials_file = prompt
+                        attempts += 1
+                        continue
+                    return False
+                if service_account is None:
+                    logging.error("[!] google-auth package missing. Run: pip install google-auth")
+                    return False
+                try:
+                    credentials = service_account.Credentials.from_service_account_file(
+                        self.credentials_file,
+                        scopes=SCOPES,
+                    )
+                except Exception as exc:
+                    logging.error(f"[!] Failed to load GCP service account credentials: {exc}")
+                    prompt = input("Enter path to a valid GCP service account JSON (blank to cancel): ").strip()
+                    if prompt:
+                        self.credentials_file = prompt
+                        attempts += 1
+                        continue
+                    return False
+            else:
+                if google_auth_default is None:
+                    logging.error("[!] google-auth package missing. Run: pip install google-auth")
+                    return False
+                try:
+                    credentials, detected_project = google_auth_default(scopes=SCOPES)
+                    if not self.project and detected_project:
+                        self.project = detected_project
+                except DefaultCredentialsError as exc:  # type: ignore[arg-type]
+                    logging.error(
+                        "[!] Unable to locate GCP Application Default Credentials. Provide a service "
+                        "account JSON with --gcp-credentials, set GOOGLE_APPLICATION_CREDENTIALS, or "
+                        "run `gcloud auth application-default login`."
+                    )
+                    logging.debug(f"GCP credential resolution error: {exc}")
+                    prompt = input("Enter path to GCP service account JSON (blank to cancel): ").strip()
+                    if prompt:
+                        self.credentials_file = prompt
+                        attempts += 1
+                        continue
+                    return False
 
-        self._credentials = credentials
-        self._client_kwargs = {"credentials": self._credentials} if self._credentials else {}
-        return True
+            self._credentials = credentials
+            self._client_kwargs = {"credentials": self._credentials} if self._credentials else {}
+            return True
+
+        return False
 
     @staticmethod
     def _last_segment(value: Optional[str]) -> str:

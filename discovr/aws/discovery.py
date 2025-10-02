@@ -1,4 +1,5 @@
 import logging
+from getpass import getpass
 from typing import Dict, Iterable, Optional, Set, List
 
 try:
@@ -26,10 +27,16 @@ class AWSDiscovery:
         profile: Optional[str] = None,
         region: Optional[str] = None,
         session=None,
+        access_key: Optional[str] = None,
+        secret_key: Optional[str] = None,
+        session_token: Optional[str] = None,
     ) -> None:
         self.profile = profile
         self.region = region
         self._provided_session = session
+        self.access_key = access_key
+        self.secret_key = secret_key
+        self.session_token = session_token
         self._sg_cache: Dict[str, dict] = {}
 
     def _create_session(self):
@@ -40,10 +47,32 @@ class AWSDiscovery:
             raise RuntimeError("boto3 library not installed")
 
         session_kwargs = {}
-        if self.profile:
+        if self.access_key and self.secret_key:
+            session_kwargs.update(
+                aws_access_key_id=self.access_key,
+                aws_secret_access_key=self.secret_key,
+            )
+            if self.session_token:
+                session_kwargs["aws_session_token"] = self.session_token
+        elif self.profile:
             session_kwargs["profile_name"] = self.profile
 
-        return boto3.Session(**session_kwargs)  # type: ignore[arg-type]
+        session = boto3.Session(**session_kwargs)  # type: ignore[arg-type]
+
+        if not session.get_credentials():
+            print("[!] No AWS credentials detected. Please provide them now.")
+            access = input("AWS access key ID: ").strip()
+            secret = getpass("AWS secret access key: ").strip()
+            token = input("AWS session token (optional): ").strip()
+            if not access or not secret:
+                raise RuntimeError("AWS credentials are required to continue")
+            session = boto3.Session(  # type: ignore[arg-type]
+                aws_access_key_id=access,
+                aws_secret_access_key=secret,
+                aws_session_token=token or None,
+            )
+
+        return session
 
     @staticmethod
     def _normalize_region(region: str) -> str:

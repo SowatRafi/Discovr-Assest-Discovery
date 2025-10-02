@@ -1,14 +1,66 @@
-from azure.identity import DefaultAzureCredential
+from getpass import getpass
+
+from azure.identity import ClientSecretCredential, DefaultAzureCredential
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.network import NetworkManagementClient
 
 
 class AzureDiscovery:
-    def __init__(self, subscription_id: str):
+    def __init__(
+        self,
+        subscription_id: str,
+        tenant_id: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        credential=None,
+    ):
         self.subscription_id = subscription_id
-        self.credential = DefaultAzureCredential()
+        if credential is not None:
+            self.credential = credential
+            self.tenant_id = tenant_id
+            self.client_id = client_id
+            self.client_secret = client_secret
+        else:
+            (
+                self.credential,
+                self.tenant_id,
+                self.client_id,
+                self.client_secret,
+            ) = self.obtain_credential(tenant_id, client_id, client_secret)
         self.network_client = NetworkManagementClient(self.credential, self.subscription_id)
+
+    @staticmethod
+    def obtain_credential(
+        tenant_id: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+    ):
+        if tenant_id and client_id and client_secret:
+            credential = ClientSecretCredential(
+                tenant_id=tenant_id,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+            return credential, tenant_id, client_id, client_secret
+
+        try:
+            credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
+            credential.get_token("https://management.azure.com/.default")
+            return credential, tenant_id, client_id, client_secret
+        except Exception:
+            print("[!] Azure credentials not detected. Please provide service principal details.")
+            tenant = tenant_id or input("Azure tenant ID: ").strip()
+            client = client_id or input("Azure client ID: ").strip()
+            secret = client_secret or getpass("Azure client secret: ").strip()
+            if not (tenant and client and secret):
+                raise RuntimeError("Azure credentials are required to continue")
+            credential = ClientSecretCredential(
+                tenant_id=tenant,
+                client_id=client,
+                client_secret=secret,
+            )
+            return credential, tenant, client, secret
 
     def run(self):
         assets = []
