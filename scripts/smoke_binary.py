@@ -29,6 +29,9 @@ def main():
                                 text=True, capture_output=True, timeout=90)
         assert result.returncode == 0, f"Packaged diagnostics failed:\n{result.stdout}\n{result.stderr}"
         assert json.loads(result.stdout)["ok"], result.stdout
+        notices = subprocess.run([str(binary), "--licenses"], cwd=folder, env=environment,
+                                 capture_output=True, timeout=30)
+        assert notices.returncode == 0 and b"scapy" in notices.stdout.lower(), notices.stderr
         with (folder / "server.log").open("w+", encoding="utf-8") as output:
             process = subprocess.Popen([str(binary), "--no-browser"], cwd=folder, env=environment,
                                        stdout=output, stderr=subprocess.STDOUT)

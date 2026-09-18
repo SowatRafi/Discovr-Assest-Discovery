@@ -33,7 +33,7 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: requirements*.txt
+          cache-dependency-path: requirements.lock
       - run: python -m pip install --require-hashes -r requirements.lock
       - run: python -m pip install pytest==9.1.1
       - run: python -m pytest -q
@@ -77,7 +77,7 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: requirements*.txt
+          cache-dependency-path: requirements.lock
       - run: python -m pip install --require-hashes -r requirements.lock
       - run: python -m pip install pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.7
       - name: Statically link Intel macOS cryptography

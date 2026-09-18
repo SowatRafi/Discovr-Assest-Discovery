@@ -91,11 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
     ad.add_argument("--ca-file", metavar="PEM", help="domain CA certificate to verify the DC (default: system "
                                                      "trust store; a DC that cannot be verified gets NTLM)")
 
-    passive = parser.add_argument_group("passive discovery (listen only; needs capture rights)")
-    passive.add_argument("--passive", action="store_true", help="learn devices from ARP/DHCP/mDNS/NetBIOS traffic")
+    passive = parser.add_argument_group("passive discovery (no packets sent)")
+    passive.add_argument("--passive", action="store_true", help="observe the OS neighbour cache without a capture driver")
     passive.add_argument("--packet-capture", action="store_true",
                          help="use packet capture instead of the OS neighbour cache (needs capture rights/driver)")
-    passive.add_argument("--iface", help="network interface (asked interactively if omitted)")
+    passive.add_argument("--iface", help="packet-capture interface (asked interactively if omitted in capture mode)")
     passive.add_argument("--timeout", type=int, default=180, help="listening time in seconds (default: 180)")
 
     out = parser.add_argument_group("reports")
