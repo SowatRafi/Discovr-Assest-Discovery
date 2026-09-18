@@ -4,7 +4,7 @@ name: build
 
 on:
   push:
-    branches: [main, Rejuvinate-Discovr, "codex/**"]
+    branches: [main, Rejuvinate-Discovr]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:

@@ -26,7 +26,8 @@ def main():
         shutil.copy2(args.binary.resolve(), binary)
         environment = dict(os.environ, PATH="", PYTHONPATH="", PYTHONHOME="")
         result = subprocess.run([str(binary), "--diagnostics"], cwd=folder, env=environment,
-                                text=True, capture_output=True, timeout=90, check=True)
+                                text=True, capture_output=True, timeout=90)
+        assert result.returncode == 0, f"Packaged diagnostics failed:\n{result.stdout}\n{result.stderr}"
         assert json.loads(result.stdout)["ok"], result.stdout
         with (folder / "server.log").open("w+", encoding="utf-8") as output:
             process = subprocess.Popen([str(binary), "--no-browser"], cwd=folder, env=environment,
