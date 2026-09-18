@@ -62,3 +62,12 @@ def test_bad_input_is_one_readable_error(tmp_path, capsys):
         main(["--scan-network", "10.0.0.0/8", "--out", str(tmp_path)])
     assert exit_info.value.code == 1
     assert "Fatal error: target is larger than a /16" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("args", [["--ui", "--cloud", "aws"], ["--ad", "--passive"],
+                                  ["--autoipaddr", "--scan-network", "127.0.0.1"],
+                                  ["--port", "-1"], ["--packet-capture"], ["--timeout", "0"]])
+def test_conflicting_or_invalid_modes_fail_before_work(args):
+    with pytest.raises(SystemExit) as error:
+        main(args)
+    assert error.value.code == 2

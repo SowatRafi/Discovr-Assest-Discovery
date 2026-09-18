@@ -1,0 +1,9 @@
+# Stable line endings across Windows, Linux and macOS builds.
+* text=auto
+*.py text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.lock text eol=lf

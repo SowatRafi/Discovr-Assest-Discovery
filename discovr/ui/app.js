@@ -32,6 +32,7 @@ const COLUMNS = [
   ["tag", "Type"], ["ports", "Ports"], ["agent", "Agent"], ["source", "Source"],
 ];
 const STATUS = {
+  partial: ["Incomplete", "i-info"],
   running: ["Running", "i-play"], done: ["Done", "i-low"], cancelled: ["Stopped", "i-stop"], error: ["Failed", "i-critical"],
 };
 const PAGE = 300;          // table rows rendered per "page" - keeps huge inventories snappy
@@ -202,8 +203,10 @@ function updateKind() {
   }
   $("start-label").textContent = `Start ${KINDS[kind].noun}`;
   let warning = "";
-  if (kind === "passive" && state.info?.captureWarning) warning = state.info.captureWarning;
-  if (kind === "passive" && state.info && !(state.info.interfaces || []).length) warning = "No network interface with an IPv4 address was found.";
+  const capture = $("f-capture-packets").checked;
+  $("f-iface").disabled = !capture;
+  if (kind === "passive" && capture && state.info?.captureWarning) warning = state.info.captureWarning;
+  if (kind === "passive" && capture && state.info && !(state.info.interfaces || []).length) warning = "No network interface with an IPv4 address was found.";
   const box = $("kind-warning");
   box.hidden = !warning;
   box.replaceChildren(icon("i-info"), el("span", {}, warning));
@@ -241,7 +244,7 @@ async function submitScan(event) {
   clearErrors();
   const form = $("scan-form");
   const data = Object.fromEntries(new FormData(form));
-  for (const name of ["osDetect", "ldaps"]) data[name] = name in data;   // checkboxes -> booleans
+  for (const name of ["osDetect", "ldaps", "capturePackets"]) data[name] = name in data;
   if (data.portsMode !== "custom") delete data.ports;
   delete data.portsMode;
   if (data.kind === "ad" && !data.password) return showFieldError("password", "Password is required");
@@ -253,6 +256,7 @@ async function submitScan(event) {
     const job = await (await api("/api/scans", { method: "POST", body: data })).json();
     toast(`Started ${job.label}`);
     $("f-password").value = "";   // never keep a secret around longer than needed
+    for (const id of ["f-access-key", "f-secret-key", "f-session-token", "f-client-secret"]) $(id).value = "";
     pollSoon();
   } catch (error) {
     if (error.field) showFieldError(error.field, error.message);
@@ -315,6 +319,7 @@ function announceFinished(jobs) {
     if (state.announced.has(job.id)) continue;
     state.announced.add(job.id);
     if (job.status === "error") toast(`${job.label} failed: ${job.error}`, "error");
+    else if (job.status === "partial") toast(`${job.label}: incomplete coverage. Review the scan warnings.`, "error");
     else toast(`${job.label} ${job.status === "cancelled" ? "stopped" : "finished"}: ${plural(job.found, "asset")}`);
   }
 }
@@ -335,6 +340,10 @@ const jobNodes = new Map();
 
 function renderJobs() {
   $("jobs-empty").hidden = state.jobs.length > 0;
+  const activeIds = new Set(state.jobs.map((job) => job.id));
+  for (const [id, node] of jobNodes) {
+    if (!activeIds.has(id)) { node.root.remove(); jobNodes.delete(id); }
+  }
   for (const job of [...state.jobs].sort((a, b) => a.started - b.started)) {
     let node = jobNodes.get(job.id);
     if (!node) {
@@ -390,8 +399,9 @@ function updateJobNode(node, job) {
   node.found.textContent = `${count(job.found)} found`;
   const seconds = Math.max(0, Math.round((job.finished || Date.now() / 1000) - job.started));
   node.elapsed.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-  node.error.hidden = !job.error;
-  node.error.textContent = job.error || "";
+  const warnings = (job.warnings || []).join("\n");
+  node.error.hidden = !job.error && !warnings;
+  node.error.textContent = job.error || warnings;
   node.stop.hidden = !running;
 }
 
@@ -498,9 +508,9 @@ function renderKpis(list) {
   const sources = new Set(list.flatMap(sourcesOf)).size;
   const tiles = [
     ["Assets", "i-layers", list.length, `from ${sources} source${sources === 1 ? "" : "s"}`],
-    ["Agent-capable", "i-agent", agents, `${pct(agents, list.length)} can run a security agent`],
+    ["Agent-capable", "i-agent", agents, `${pct(agents, list.length)} likely agent candidates`],
     ["Critical or high risk", "i-high", urgent, urgent ? "triage these first" : "nothing urgent"],
-    ["Internet-exposed", "i-globe", exposed, "public IP with an open firewall rule"],
+    ["Potential exposure", "i-globe", exposed, "public address with an internet allow rule"],
   ];
   $("kpis").replaceChildren(...tiles.map(([label, iconId, value, sub]) => el("div", { className: "kpi" },
     el("div", { className: "kpi-label" }, icon(iconId), label),
@@ -635,8 +645,8 @@ function openDetails(id) {
   const summary = el("div", { className: "detail-summary" },
     el("span", { className: "pill" }, icon(risk.icon, `risk-icon ${risk.css}`), `${a.Risk} risk`),
     el("span", { className: "pill" }, tagName(a.Tag)),
-    el("span", { className: "pill" }, a.AgentCapable ? "Agent-capable" : "Cannot run an agent"),
-    a.InternetExposed ? el("span", { className: "pill" }, icon("i-globe", "risk-icon high"), "Internet-exposed") : null);
+    el("span", { className: "pill" }, a.AgentCapable ? "Likely agent-capable" : "Not identified as agent-capable"),
+    a.InternetExposed ? el("span", { className: "pill" }, icon("i-globe", "risk-icon high"), "Potential internet exposure") : null);
   const hidden = new Set(["Hostname", "Risk", "Tag", "AgentCapable"]);
   const fields = Object.entries(a).filter(([k]) => !k.startsWith("_") && !hidden.has(k))
     .sort(([x], [y]) => x.localeCompare(y));
@@ -678,6 +688,7 @@ async function exportAssets(format) {
 
 async function importFile(file) {
   try {
+    if (file.size > 30 * 1024 * 1024) throw new Error("Choose a JSON report smaller than 30 MB");
     const parsed = JSON.parse(await file.text());
     const assets = Array.isArray(parsed) ? parsed : parsed?.assets;
     if (!Array.isArray(assets)) throw new Error("This file is not a Discovr JSON report");
@@ -704,6 +715,7 @@ function wire() {
   $("theme-toggle").addEventListener("click", () => applyTheme(currentTheme() === "dark" ? "light" : "dark", true));
 
   for (const radio of document.querySelectorAll('input[name="kind"]')) radio.addEventListener("change", updateKind);
+  $("f-capture-packets").addEventListener("change", updateKind);
   for (const radio of document.querySelectorAll('input[name="intensity"]')) {
     radio.addEventListener("change", () => { $("intensity-hint").textContent = INTENSITY_HINTS[radio.value]; });
   }

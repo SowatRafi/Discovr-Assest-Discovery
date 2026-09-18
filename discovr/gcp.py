@@ -11,6 +11,7 @@ GOOGLE_APPLICATION_CREDENTIALS, or the metadata server on GCP).
 import logging
 
 from discovr.tagger import port_sort_key
+from discovr.scan import ScanControl
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ def firewall_ports(instance, firewalls) -> tuple:
 
     A rule applies when it is enabled, ingress, on the VM's network, and either targets
     every instance or matches one of the VM's network tags / service accounts.
-    ponytail: unions Allow rules and ignores Deny rules/priorities (may over-report exposure).
+    Unions Allow rules; Deny rules and priorities are not evaluated.
     """
     networks = {nic.get("network") for nic in instance.get("networkInterfaces", [])}
     tags = set(instance.get("tags", {}).get("items", []))
@@ -52,7 +53,11 @@ def firewall_ports(instance, firewalls) -> tuple:
         target_tags, target_accounts = set(rule.get("targetTags", [])), set(rule.get("targetServiceAccounts", []))
         if (target_tags or target_accounts) and not (target_tags & tags or target_accounts & accounts):
             continue
-        public = bool(INTERNET & set(rule.get("sourceRanges", [])))
+        ranges = rule.get("sourceRanges", [])
+        # An ingress rule without any source selector defaults to all IPv4 sources.
+        if not ranges and not rule.get("sourceTags") and not rule.get("sourceServiceAccounts"):
+            ranges = ["0.0.0.0/0"]
+        public = bool(INTERNET & set(ranges))
         for entry in rule.get("allowed", []):
             if entry.get("IPProtocol") not in ("tcp", "udp", "all", "6", "17"):
                 continue
@@ -67,7 +72,11 @@ def instance_to_asset(instance, project, firewalls) -> dict:
     """Convert one Compute Engine instance into a Discovr asset."""
     nic = (instance.get("networkInterfaces") or [{}])[0]
     private_ip = nic.get("networkIP")
-    public_ip = next((c["natIP"] for c in nic.get("accessConfigs", []) if c.get("natIP")), None)
+    public = [c["natIP"] for n in instance.get("networkInterfaces", [])
+              for c in n.get("accessConfigs", []) if c.get("natIP")]
+    public_v6 = [c["externalIpv6"] for n in instance.get("networkInterfaces", [])
+                 for c in n.get("ipv6AccessConfigs", []) if c.get("externalIpv6")]
+    public_ip = public[0] if public else None
     allowed, exposed = firewall_ports(instance, firewalls)
     zone = _name(instance.get("zone"))
     scheduling = instance.get("scheduling", {})
@@ -77,7 +86,8 @@ def instance_to_asset(instance, project, firewalls) -> dict:
         "OS": license_os(instance),
         "Ports": ",".join(sorted(allowed, key=port_sort_key)) or "None",
         "ExposedPorts": ",".join(sorted(exposed, key=port_sort_key)) or "None",
-        "InternetExposed": bool(public_ip and exposed),
+        "InternetExposed": bool((public or public_v6) and exposed),
+        "ExposureAssessment": "Potential exposure from allow rules; priorities, routing and deny rules not evaluated",
         "Source": "GCP",
         "Cloud": "GCP",
         "ProjectID": project,
@@ -89,6 +99,7 @@ def instance_to_asset(instance, project, firewalls) -> dict:
         "Status": instance.get("status", "Unknown"),
         "Preemptible": bool(scheduling.get("preemptible")) or scheduling.get("provisioningModel") == "SPOT",
         "PublicIP": public_ip or "N/A",
+        "PublicIPv6": public_v6,
         "Network": _name(nic.get("network")),
         "Subnet": _name(nic.get("subnetwork")),
         "NetworkTags": instance.get("tags", {}).get("items", []),
@@ -101,13 +112,19 @@ def instance_to_asset(instance, project, firewalls) -> dict:
     }
 
 
-def _gcp_list(session, url, aggregated=False) -> list:
+def _gcp_list(session, url, aggregated=False, control=None, on_items=None) -> list:
     """GET a Compute API collection, following nextPageToken; flattens aggregated (per-zone) lists."""
-    params, items = {"maxResults": 500}, []
+    control = control or ScanControl()
+    params, items, tokens = {"maxResults": 500}, [], set()
     if aggregated:
         params["returnPartialSuccess"] = "true"  # one unreachable zone must not fail the whole list
     while True:
-        resp = session.get(url, params=params, timeout=60)
+        control.check()
+        import requests
+        try:
+            resp = session.get(url, params=params, timeout=(5, 15))
+        except requests.RequestException as exc:
+            raise RuntimeError(f"GCP request failed: {exc.__class__.__name__}") from exc
         if resp.status_code >= 400:
             try:
                 detail = resp.json().get("error", {}).get("message") or resp.text[:200]
@@ -117,11 +134,18 @@ def _gcp_list(session, url, aggregated=False) -> list:
         data = resp.json()
         if aggregated:
             for block in data.get("items", {}).values():
+                if block.get("warning", {}).get("code") not in (None, "NO_RESULTS_ON_PAGE"):
+                    control.warn(f"GCP returned partial results: {block['warning'].get('message', 'zone unavailable')}")
                 items.extend(block.get("instances", []))
+                if on_items:
+                    on_items(block.get("instances", []))
         else:
             items.extend(data.get("items", []))
         if not data.get("nextPageToken"):
             return items
+        if data["nextPageToken"] in tokens:
+            raise RuntimeError("GCP returned a repeated pagination token")
+        tokens.add(data["nextPageToken"])
         params["pageToken"] = data["nextPageToken"]
 
 
@@ -160,21 +184,47 @@ class GCPDiscovery:
             raise RuntimeError(f"GCP authentication failed: {exc}")
         return AuthorizedSession(creds), default_project
 
-    def run(self):
+    def run(self, on_progress=None, on_asset=None, cancel=None):
         """Return VM assets for the project; raises on credential or API errors."""
+        control = ScanControl(on_progress, on_asset, cancel)
+        self.warnings = control.warnings
+        control.progress(0, 0, "Authenticating with GCP")
         session, default_project = self._session()
+        try:
+            return self._scan_project(session, default_project, control)
+        finally:
+            session.close()
+
+    def _scan_project(self, session, default_project, control):
+        """Read project inventory; the caller owns and closes the authorised session."""
         project = self.project or default_project
         if not project:
             raise RuntimeError("No GCP project given - pass --project or run `gcloud config set project <id>`")
-        instances = _gcp_list(session, f"{COMPUTE}/projects/{project}/aggregated/instances", aggregated=True)
+        control.progress(0, 0, "Listing GCP instances")
+        def discovered(instances):
+            for instance in instances:
+                if not self.zone or _name(instance.get("zone")) == self.zone:
+                    asset = instance_to_asset(instance, project, [])
+                    asset.update(Ports="Unknown", ExposedPorts="Unknown", InternetExposed=None,
+                                 ExposureAssessment="Unknown: firewall metadata pending")
+                    control.emit(asset)
+
+        instances = _gcp_list(session, f"{COMPUTE}/projects/{project}/aggregated/instances", aggregated=True,
+                              control=control, on_items=discovered)
         if self.zone:
             instances = [i for i in instances if _name(i.get("zone")) == self.zone]
+        unavailable = False
         try:
-            firewalls = _gcp_list(session, f"{COMPUTE}/projects/{project}/global/firewalls")
+            firewalls = _gcp_list(session, f"{COMPUTE}/projects/{project}/global/firewalls", control=control)
         except RuntimeError as exc:  # exposure is context; missing permission must not hide the VMs
-            log.warning(f"[!] Firewall rules unavailable ({exc}); ports will show as None")
+            control.warn(f"Firewall rules unavailable ({exc}); exposure is unknown")
             firewalls = []
+            unavailable = True
         assets = [instance_to_asset(i, project, firewalls) for i in instances]
         for a in assets:
+            if unavailable:
+                a.update(Ports="Unknown", ExposedPorts="Unknown", InternetExposed=None,
+                         ExposureAssessment="Unknown: firewall rules unavailable")
+            control.emit(a)
             log.info(f"    [+] GCP {a['Zone']}: {a['IP']} ({a['Hostname']}) | OS: {a['OS']} | {a['Status']}")
         return assets

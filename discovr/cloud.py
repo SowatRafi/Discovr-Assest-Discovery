@@ -6,7 +6,7 @@ the import cost of boto3 or azure-identity.
 
 
 def CloudDiscovery(provider, profile=None, region=None, subscription=None, project=None, zone=None,
-                   credentials_file=None):
+                   credentials_file=None, runtime_credentials=None):
     """Return the discovery object (with a .run() method) for "aws", "azure" or "gcp".
 
     Kept as a CamelCase factory so existing `CloudDiscovery(...).run()` callers keep working.
@@ -14,11 +14,11 @@ def CloudDiscovery(provider, profile=None, region=None, subscription=None, proje
     if provider == "aws":
         from discovr.aws import AWSDiscovery
 
-        return AWSDiscovery(profile=profile, region=region or "all")
+        return AWSDiscovery(profile=profile, region=region or "all", runtime_credentials=runtime_credentials)
     if provider == "azure":
         from discovr.azure import AzureDiscovery
 
-        return AzureDiscovery(subscription=subscription)
+        return AzureDiscovery(subscription=subscription, runtime_credentials=runtime_credentials)
     if provider == "gcp":
         from discovr.gcp import GCPDiscovery
 

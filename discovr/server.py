@@ -31,7 +31,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from discovr import __version__
-from discovr.core import asset_key, is_elevated, merge_assets, to_csv, to_html, to_json
+from discovr.core import is_elevated, merge_assets, to_csv, to_html, to_json
+from discovr.scan import ScanCancelled
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +60,10 @@ class BadRequest(ValueError):
 
 def _text(params, name, required=False, label=None):
     """Trimmed string parameter; raises BadRequest naming the field when a required one is empty."""
-    value = str(params.get(name) or "").strip()
+    value = params.get(name)
+    if value is not None and not isinstance(value, str):
+        raise BadRequest(f"{label or name} must be text", field=name)
+    value = (value or "").strip()
     if required and not value:
         raise BadRequest(f"{label or name} is required", field=name)
     return value or None
@@ -75,6 +79,9 @@ def _file(params, name, label):
 
 def build_scanner(kind, params):
     """Validate UI parameters and return (scanner, human label). Imports providers lazily."""
+    for name in ("osDetect", "ldaps", "capturePackets"):
+        if name in params and not isinstance(params[name], bool):
+            raise BadRequest(f"{name} must be true or false", field=name)
     if kind == "network":
         from discovr.network import NetworkDiscovery, parse_port_spec, parse_targets
 
@@ -89,37 +96,52 @@ def build_scanner(kind, params):
         except ValueError as exc:
             raise BadRequest(str(exc), field="ports")
         intensity = params.get("intensity") or "normal"
+        if intensity not in ("gentle", "normal", "aggressive"):
+            raise BadRequest("Choose gentle, normal or aggressive", field="intensity")
         return (NetworkDiscovery(target, ports, None, intensity, bool(params.get("osDetect"))),
                 f"Network {target}")
     if kind == "passive":
         from discovr.passive import PassiveDiscovery
 
-        iface = _text(params, "iface", True, "Interface")
+        capture = params.get("capturePackets", False)
+        iface = _text(params, "iface", bool(capture), "Interface")
         try:
             seconds = int(params.get("duration") or 120)
         except (TypeError, ValueError):
             raise BadRequest("Duration must be a number of seconds", field="duration")
         if not 10 <= seconds <= 3600:
             raise BadRequest("Duration must be between 10 and 3600 seconds", field="duration")
-        return PassiveDiscovery(iface=iface, timeout=seconds), f"Passive on {iface} ({seconds}s)"
+        label = f"Packet capture on {iface}" if capture else "OS neighbour cache"
+        return PassiveDiscovery(iface=iface, timeout=seconds, cache_only=not capture), f"{label} ({seconds}s)"
     if kind == "ad":
         from discovr.active_directory import ADDiscovery
 
         domain = _text(params, "domain", True, "Domain")
         username = _text(params, "username", True, "Username")
         password = params.get("password") or ""
+        if not isinstance(password, str):
+            raise BadRequest("Password must be text", field="password")
         if not password:
             raise BadRequest("Password is required", field="password")
+        if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", domain) or ".." in domain:
+            raise BadRequest("Enter a DNS domain name", field="domain")
         return (ADDiscovery(domain, username, password, dc=_text(params, "dc"), use_ldaps=bool(params.get("ldaps")),
                             ca_file=_file(params, "caFile", "CA certificate file")),
                 f"Active Directory {domain}")
     if kind in ("aws", "azure", "gcp"):
         from discovr.cloud import CloudDiscovery
 
+        credentials = {}
+        fields = ("accessKey", "secretKey") if kind == "aws" else ("tenantId", "clientId", "clientSecret") if kind == "azure" else ()
+        if any(params.get(f) for f in fields):
+            credentials = {f: _text(params, f, True) for f in fields}
+            if kind == "aws":
+                credentials["sessionToken"] = _text(params, "sessionToken")
         scanner = CloudDiscovery(kind, profile=_text(params, "profile"), region=_text(params, "region") or "all",
                                  subscription=_text(params, "subscription"), project=_text(params, "project"),
                                  zone=_text(params, "zone"),
-                                 credentials_file=_file(params, "credentialsFile", "Service-account key file"))
+                                 credentials_file=_file(params, "credentialsFile", "Service-account key file"),
+                                 runtime_credentials=credentials)
         scope = _text(params, "project") or _text(params, "subscription") or _text(params, "region") or "all"
         return scanner, f"{kind.upper() if kind != 'azure' else 'Azure'} ({scope})"
     raise BadRequest(f"Unknown scan type: {kind}")
@@ -137,7 +159,10 @@ def host_info() -> dict:
 
     def installed(module):
         """True when an optional provider library is bundled/installed."""
-        return importlib.util.find_spec(module) is not None
+        try:
+            return importlib.util.find_spec(module) is not None
+        except (ImportError, ModuleNotFoundError):
+            return False
 
     return {
         "version": __version__,
@@ -175,12 +200,16 @@ class Session:
     def merge(self, assets, source=None):
         """Merge assets into the inventory and bump the version."""
         with self.lock:
-            merge_assets(self.inventory, assets, source, index=self.index)
+            keys = []
+            merge_assets(self.inventory, assets, source, index=self.index, keys=keys)
             self.version += 1
+            return keys
 
     def clear(self):
         """Forget every asset (jobs and the activity log stay)."""
         with self.lock:
+            if self.cancels:
+                raise BadRequest("Stop running scans before clearing the inventory")
             self.inventory.clear()
             self.index.clear()
             self.version += 1
@@ -191,9 +220,13 @@ class Session:
         with self.lock:
             if sum(j["status"] == "running" for j in self.jobs.values()) >= MAX_RUNNING:
                 raise BadRequest("Too many scans running - wait for one to finish")
+            finished = [key for key, old in self.jobs.items() if old["finished"] is not None]
+            while len(self.jobs) >= 100 and finished:
+                self.jobs.pop(finished.pop(0))
             job = {"id": uuid.uuid4().hex[:8], "kind": kind, "label": label, "status": "running",
                    "stage": "Starting", "done": 0, "total": 0, "found": 0, "error": None,
                    "started": time.time(), "finished": None}
+            job["warnings"] = []
             self.jobs[job["id"]] = job
             self.cancels[job["id"]] = threading.Event()
         threading.Thread(target=self._run, args=(job, kind, scanner), daemon=True,
@@ -215,33 +248,42 @@ class Session:
 
         def progress(done, total, stage):
             with self.lock:
-                job.update(done=done, total=total, stage=stage)
+                job.update(done=done, total=total, stage="Stopping" if cancel.is_set() else stage)
 
         def found(asset):
-            self.merge([asset])
+            keys = self.merge([asset])
             with self.lock:
-                seen.add(asset_key(asset))
+                seen.update(keys)
                 job["found"] = len(seen)
 
         self.note("info", f"Started {job['label']}")
         try:
-            if kind in ("network", "passive"):  # these report progress and stream assets live
-                result = scanner.run(on_progress=progress, on_asset=found, cancel=cancel)
-            else:
-                result = scanner.run()
+            result = scanner.run(on_progress=progress, on_asset=found, cancel=cancel)
             assets = result[0] if isinstance(result, tuple) else result
-            self.merge(assets)
+            keys = self.merge(assets)
             with self.lock:
-                seen.update(asset_key(a) for a in assets)
-                job.update(status="cancelled" if cancel.is_set() else "done", found=len(seen), stage="Finished")
+                seen.update(keys)
+                warnings = list(getattr(scanner, "warnings", []))
+                status = "cancelled" if cancel.is_set() else "partial" if warnings else "done"
+                job.update(status=status, found=len(seen), stage="Stopped" if cancel.is_set() else "Finished",
+                           warnings=warnings)
             self.note("info", f"Finished {job['label']}: {len(seen)} asset{'' if len(seen) == 1 else 's'}")
+        except ScanCancelled:
+            with self.lock:
+                job.update(status="cancelled", stage="Stopped")
+            self.note("info", f"Stopped {job['label']}: kept {len(seen)} assets")
         except Exception as exc:  # any scanner failure becomes a readable job error, never a crash
             message = str(exc) or exc.__class__.__name__
             log.warning(f"[!] {job['label']} failed: {message}")
             with self.lock:
                 job.update(status="error", error=message, stage="Failed")
         finally:
+            if hasattr(scanner, "password"):
+                scanner.password = None
+            if hasattr(scanner, "runtime_credentials"):
+                scanner.runtime_credentials.clear()
             with self.lock:
+                job["warnings"] = list(getattr(scanner, "warnings", []))
                 job["finished"] = time.time()
                 self.cancels.pop(job["id"], None)
 
@@ -301,9 +343,12 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             raise BadRequest("Chunked request bodies are not supported")
         raw_length = self.headers.get("Content-Length")
+        if len(self.headers.get_all("Content-Length", [])) > 1:
+            self.close_connection = True
+            raise BadRequest("Duplicate Content-Length headers are not supported")
         if raw_length is None:
             return b""
-        length = int(raw_length) if raw_length.strip().isdigit() else -1
+        length = int(raw_length) if len(raw_length) <= 10 and raw_length.strip().isdigit() else -1
         if not 0 <= length <= MAX_BODY:
             self.close_connection = True
             raise BadRequest("Invalid or too large Content-Length")
@@ -315,8 +360,14 @@ class Handler(BaseHTTPRequestHandler):
             raise BadRequest("Expected an application/json body")
         try:
             return json.loads(self._raw or b"{}")
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
             raise BadRequest("Malformed JSON")
+
+    def _object_body(self):
+        body = self._body()
+        if not isinstance(body, dict):
+            raise BadRequest("Expected a JSON object")
+        return body
 
     def do_GET(self):
         self._dispatch("GET")
@@ -353,10 +404,21 @@ class Handler(BaseHTTPRequestHandler):
     def _route(self, method, path, query):
         """The REST API (also usable by scripts and integrations with the session token)."""
         session = self.server.session
+        if method == "POST" and path == "/api/shutdown":
+            self._send(202, {"ok": True})
+            with session.lock:
+                for event in session.cancels.values():
+                    event.set()
+            # shutdown must run outside the serve_forever thread to avoid deadlock.
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return
         if method == "GET" and path == "/api/info":
             return self._send(200, host_info())
         if method == "GET" and path == "/api/state":
-            since = int((query.get("since") or ["0"])[0] or 0)
+            try:
+                since = int((query.get("since") or ["0"])[0] or 0)
+            except ValueError:
+                raise BadRequest("since must be an integer")
             with session.lock:
                 return self._send(200, {"version": session.version, "count": len(session.inventory),
                                         "jobs": list(session.jobs.values()),
@@ -373,23 +435,37 @@ class Handler(BaseHTTPRequestHandler):
             raw = body.get("assets") if isinstance(body, dict) else body
             if not isinstance(raw, list) or not all(isinstance(a, dict) for a in raw):
                 raise BadRequest("Expected a Discovr JSON report (a list of assets)")
+            # Reject malformed identity/classification fields before mutating inventory.
+            scalars = {"IP", "MAC", "Hostname", "OS", "Source", "Cloud", "InstanceID", "AccountID",
+                       "SubscriptionID", "ProjectID", "Region", "Zone", "Ports", "ExposedPorts"}
+            booleans = {"InternetExposed", "Enabled", "Stale", "DomainController"}
+            if len(raw) > 65536:
+                raise BadRequest("Import is limited to 65,536 assets")
+            for asset in raw:
+                for key, value in asset.items():
+                    if key in scalars and value is not None and not isinstance(value, str):
+                        raise BadRequest(f"{key} must be text")
+                    if key in booleans and value is not None and not isinstance(value, bool):
+                        raise BadRequest(f"{key} must be true or false")
             clean = [{str(k)[:100]: v for k, v in a.items() if not str(k).startswith("_")} for a in raw]
             session.merge(clean, source="Import")
             session.note("info", f"Imported {len(clean)} assets")
             return self._send(200, {"imported": len(clean)})
         if method == "POST" and path == "/api/scans":
-            body = self._body()
+            body = self._object_body()
             return self._send(202, session.start(str(body.get("kind")), body))
         cancel = re.fullmatch(r"/api/scans/([0-9a-f]{8})/cancel", path)
         if method == "POST" and cancel:
             session.cancel(cancel.group(1))
             return self._send(200, {"ok": True})
         if method == "POST" and path == "/api/export":
-            body = self._body()
+            body = self._object_body()
             fmt = body.get("format")
             if fmt not in EXPORTS:
                 raise BadRequest("format must be csv, json or html")
             ids = body.get("ids")
+            if ids is not None and (not isinstance(ids, list) or not all(isinstance(k, str) for k in ids)):
+                raise BadRequest("ids must be a list of asset IDs")
             with session.lock:
                 keys = ids if isinstance(ids, list) else list(session.inventory)
                 assets = [dict(session.inventory[k]) for k in keys if k in session.inventory]
@@ -400,9 +476,35 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"error": "Unknown API endpoint"})
 
 
+class LocalHTTPServer(ThreadingHTTPServer):
+    """Bound concurrent connections, including idle browser keep-alive sockets."""
+
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        self.slots = threading.BoundedSemaphore(32)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+
 def create_server(port=0):
     """Build (but do not start) the UI server on 127.0.0.1; returns (server, url)."""
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = LocalHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     actual = server.server_address[1]
     server.token = secrets.token_urlsafe(24)
@@ -417,7 +519,8 @@ def serve(port=0, open_browser=True):
     server, url = create_server(port)
     app_log = logging.getLogger("discovr")
     app_log.setLevel(logging.INFO)
-    app_log.addHandler(_ActivityHandler(server.session))
+    activity_handler = _ActivityHandler(server.session)
+    app_log.addHandler(activity_handler)
 
     # flush: when stdout is a pipe (launchers, services) Python would otherwise hold the URL back.
     print(f"\n  Discovr {__version__} is running at:\n\n    {url}\n", flush=True)
@@ -434,3 +537,5 @@ def serve(port=0, open_browser=True):
             for event in server.session.cancels.values():
                 event.set()  # stop running scans so the process can exit promptly
         server.server_close()
+        app_log.removeHandler(activity_handler)
+        activity_handler.close()

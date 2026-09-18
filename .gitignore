@@ -50,6 +50,7 @@ dist/
 
 # Test caches
 .pytest_cache/
+/tmp/
 
 # Local agent/tooling state (never part of the product)
 .claude-flow/

@@ -13,6 +13,7 @@ import ipaddress
 import json
 import logging
 import os
+import uuid
 from datetime import datetime
 from pathlib import Path
 from string import Template
@@ -110,31 +111,40 @@ def csv_safe(value) -> str:
 
 # --------------------------------------------------------------------------- merging
 
-def _short_name(asset) -> str:
-    """Lower-case host label without the domain part ("PC01.corp.local" -> "pc01")."""
+def _host_name(asset) -> str:
+    """Keep the DNS suffix: pc01 in two domains is not the same computer."""
     name = str(asset.get("Hostname") or "").strip().lower()
-    return "" if is_blank(name) else name.split(".")[0]
+    return "" if is_blank(name) else name.rstrip(".")
 
 
 def asset_key(asset) -> str:
-    """Stable inventory key for a new record: IP, else MAC, else short hostname."""
-    return next((f"{kind}:{value}" for kind, value in _identities(asset)), f"id:{id(asset)}")
+    """Prefer provider identity; use a UUID when a record has no usable identity."""
+    return next((f"{kind}:{value}" for kind, value in _identities(asset)), f"id:{uuid.uuid4().hex}")
 
 
-def _identities(asset, for_matching=False) -> list:
-    """Ways to recognise the same machine: ("ip", ...), ("mac", ...), ("host", ...).
-
-    When matching an incoming record, the hostname is only used if it has no IP:
-    two different devices can share a name ("raspberrypi"), but an AD computer whose
-    DNS record is missing should still join the host the network scan found.
-    """
+def _identities(asset) -> list:
+    """Provider-scoped resource identity, or local IP/MAC/full-DNS identities."""
+    cloud = str(asset.get("Cloud") or "").strip().lower()
+    if cloud:
+        # Private IPs and display names are routinely reused across accounts/VPCs.
+        # Never correlate cloud and LAN records without explicit topology evidence.
+        scope = [cloud] + [str(asset.get(k) or "").lower() for k in
+                           ("AccountID", "SubscriptionID", "ProjectID", "Region", "Zone")]
+        instance = str(asset.get("InstanceID") or "").strip().lower()
+        if not is_blank(instance):
+            return [("cloud", json.dumps(scope + [instance], separators=(",", ":")))]
+        return []
     ip = str(asset.get("IP") or "").strip()
-    mac = str(asset.get("MAC") or "").strip().lower()
+    try:
+        ip = str(ipaddress.ip_address(ip))
+    except ValueError:
+        ip = ""
+    mac = str(asset.get("MAC") or "").strip().lower().replace("-", ":")
     found = [("ip", ip)] if not is_blank(ip) else []
     if not is_blank(mac):
         found.append(("mac", mac))
-    if _short_name(asset) and not (for_matching and found):
-        found.append(("host", _short_name(asset)))
+    if _host_name(asset):
+        found.append(("host", _host_name(asset)))
     return found
 
 
@@ -143,17 +153,19 @@ def _merge_tokens(first, second) -> str:
     tokens = set()
     for value in (first, second):
         if not is_blank(value):
-            tokens.update(t.strip() for t in str(value).replace(";", ",").split(",") if t.strip())
+            values = value if isinstance(value, (list, tuple, set)) else str(value).replace(";", ",").split(",")
+            tokens.update(str(t).strip() for t in values if not is_blank(t))
     ordered = sorted(tokens, key=port_sort_key)
     return ",".join(ordered) if ordered else str(first or second or "")
 
 
-def merge_assets(inventory: dict, assets, source=None, index=None) -> dict:
+def merge_assets(inventory: dict, assets, source=None, index=None, keys=None) -> dict:
     """Merge newly discovered assets into ``inventory`` (key -> asset) in place.
 
     The same machine is often seen by several sources - AD knows its exact OS, the
     network scan knows its open ports, the cloud API knows its instance ID. Records are
-    matched by IP or MAC (hostname only when the newcomer has no IP); each field keeps
+    matched by scoped resource identity or local IP/MAC (unambiguous hostname when one
+    side lacks an IP); each field keeps
     the most informative value, port and source lists are unioned, and derived fields
     (Tag/Risk/AgentCapable) are recomputed for the touched records only.
 
@@ -161,20 +173,38 @@ def merge_assets(inventory: dict, assets, source=None, index=None) -> dict:
         UI streams one host at a time) pass their own dict so each merge stays O(1).
     """
     if index is None:
-        index = {ident: key for key, asset in inventory.items() for ident in _identities(asset)}
+        index = {}
+        for key, asset in inventory.items():
+            for ident in _identities(asset):
+                index.setdefault(ident, set()).add(key)
     touched = set()
     for incoming in assets:
         incoming = dict(incoming)
         if source:
             incoming.setdefault("Source", source)
-        key = next((index[i] for i in _identities(incoming, for_matching=True) if i in index), None) \
-            or asset_key(incoming)
+        identities = _identities(incoming)
+        matches = set()
+        for ident in identities:
+            candidates = index.get(ident, set())
+            if ident[0] == "host":
+                # A name can fill in missing addresses, but cannot override two known,
+                # different addresses. Ambiguous names are deliberately kept separate.
+                candidates = {k for k in candidates if is_blank(incoming.get("IP"))
+                              or is_blank(inventory[k].get("IP"))}
+            matches.update(candidates)
+        key = next(iter(matches)) if len(matches) == 1 else asset_key(incoming)
+        if key in inventory and key not in matches:
+            key = f"id:{uuid.uuid4().hex}"
         current = inventory.setdefault(key, {})
+        old_identities = _identities(current)
+        same_source = bool((set(str(current.get("Source", "")).split(", ")) &
+                            set(str(incoming.get("Source", "")).split(", "))) - {""})
         for field, value in incoming.items():
             if field in DERIVED_FIELDS:
                 continue
             if field == "Ports":
-                current["Ports"] = _merge_tokens(current.get("Ports"), value)
+                current["Ports"] = (_merge_tokens(None, value) if same_source
+                                    else _merge_tokens(current.get("Ports"), value))
             elif field == "Source":
                 current["Source"] = _merge_tokens(current.get("Source"), value).replace(",", ", ")
             elif is_blank(current.get(field)) and not is_blank(value):
@@ -182,11 +212,20 @@ def merge_assets(inventory: dict, assets, source=None, index=None) -> dict:
             elif field == "OS" and "guessed" in str(current.get("OS", "")).lower() and not is_blank(value) \
                     and "guessed" not in str(value).lower():
                 current[field] = value  # a real OS name beats a port-based guess
+            elif same_source and (not is_blank(value) or incoming.get("Cloud")) and not (
+                    field == "OS" and (is_blank(value) or "guessed" in str(value).lower())):
+                current[field] = value  # repeat scans must refresh power state, exposure and IPs
             elif field not in current:
                 current[field] = value
+        for ident in old_identities:
+            index.get(ident, set()).discard(key)
+            if not index.get(ident):
+                index.pop(ident, None)
         for ident in _identities(current):
-            index[ident] = key
+            index.setdefault(ident, set()).add(key)
         touched.add(key)
+        if keys is not None:
+            keys.append(key)
     enrich(inventory[key] for key in touched)
     return inventory
 

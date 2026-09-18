@@ -126,17 +126,17 @@ class FakeResponse:
 
 
 def test_arm_list_follows_next_link_and_reports_errors(monkeypatch):
-    pages = {"https://arm/a": FakeResponse({"value": [1, 2], "nextLink": "https://arm/b"}),
-             "https://arm/b": FakeResponse({"value": [3]}),
-             "https://arm/denied": FakeResponse({"error": {"message": "AuthorizationFailed"}}, 403)}
-    monkeypatch.setattr(requests, "get", lambda url, headers, timeout: pages[url])
-    assert azure._arm_list("token", "https://arm/a") == [1, 2, 3]
+    pages = {f"{azure.ARM}/a": FakeResponse({"value": [1, 2], "nextLink": f"{azure.ARM}/b"}),
+             f"{azure.ARM}/b": FakeResponse({"value": [3]}),
+             f"{azure.ARM}/denied": FakeResponse({"error": {"message": "AuthorizationFailed"}}, 403)}
+    monkeypatch.setattr(requests, "get", lambda url, **kwargs: pages[url])
+    assert azure._arm_list("token", f"{azure.ARM}/a") == [1, 2, 3]
     with pytest.raises(RuntimeError, match="AuthorizationFailed"):
-        azure._arm_list("token", "https://arm/denied")
+        azure._arm_list("token", f"{azure.ARM}/denied")
 
 
 def test_azure_scans_all_subscriptions_and_survives_one_failure(monkeypatch):
-    def fake_list(token, url):
+    def fake_list(token, url, control=None):
         """Route ARM URLs to canned data; the second subscription is forbidden."""
         if "/subscriptions?" in url:
             return [{"subscriptionId": SUB, "state": "Enabled"}, {"subscriptionId": "bad", "state": "Enabled"},
@@ -159,3 +159,42 @@ def test_cloud_dispatcher():
     assert CloudDiscovery("gcp", project="p", zone="z").zone == "z"
     with pytest.raises(ValueError):
         CloudDiscovery("oracle")
+
+
+@pytest.mark.parametrize("next_link", ["https://evil.example/steal", "http://management.azure.com/a",
+                                      f"{azure.ARM}/a"])
+def test_arm_pagination_never_leaks_tokens_or_loops(monkeypatch, next_link):
+    called = []
+
+    def get(url, **kwargs):
+        called.append(url)
+        return FakeResponse({"value": [], "nextLink": next_link})
+
+    monkeypatch.setattr(requests, "get", get)
+    with pytest.raises(RuntimeError, match="pagination"):
+        azure._arm_list("secret-token", f"{azure.ARM}/a")
+    assert called == [f"{azure.ARM}/a"]
+
+
+def test_azure_missing_nsg_permission_preserves_vms_with_unknown_exposure(monkeypatch):
+    def fake_list(token, url, control=None):
+        if "networkSecurityGroups" in url:
+            raise RuntimeError("Forbidden")
+        kind = ("statuses" if "statusOnly" in url else "vms" if "virtualMachines" in url
+                else "nics" if "networkInterfaces" in url else "public_ips")
+        return AZURE_LISTS[kind]
+
+    monkeypatch.setattr(azure, "_arm_list", fake_list)
+    scanner = azure.AzureDiscovery(subscription=SUB, credential=SimpleNamespace(get_token=lambda _: SimpleNamespace(token="t")))
+    [asset] = scanner.run()
+    assert asset["InternetExposed"] is None and asset["Ports"] == "Unknown" and scanner.warnings
+
+
+def test_aws_public_ipv6_is_included_in_exposure():
+    from discovr.aws import instance_to_asset
+    instance = {"InstanceId": "i-v6", "NetworkInterfaces": [{"Ipv6Addresses": [{"Ipv6Address": "2001:db8::1"}]}],
+                "SecurityGroups": [{"GroupId": "sg-v6"}]}
+    group = {"IpPermissions": [{"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443,
+                                "Ipv6Ranges": [{"CidrIpv6": "::/0"}]}]}
+    asset = instance_to_asset(instance, "r", "a", {"sg-v6": group}, {})
+    assert asset["InternetExposed"] and asset["PublicIPv6"] == ["2001:db8::1"]

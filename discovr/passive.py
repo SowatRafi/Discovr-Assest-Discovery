@@ -86,7 +86,7 @@ def capture_warning() -> str:
 class PassiveDiscovery:
     """Listens on one interface and turns self-announcing traffic into assets."""
 
-    def __init__(self, iface=None, count=0, timeout=180):
+    def __init__(self, iface=None, count=0, timeout=180, cache_only=False):
         """
         :param iface: interface name ("Wi-Fi", "Ethernet", "eth0", "en0"); prompted for if missing
         :param count: stop after this many packets (0 = no limit)
@@ -95,6 +95,7 @@ class PassiveDiscovery:
         self.iface = iface
         self.count = count
         self.timeout = timeout
+        self.cache_only = cache_only
         self.devices = {}   # MAC -> asset
         self.on_asset = None
 
@@ -176,9 +177,11 @@ class PassiveDiscovery:
         :param on_asset: callback(asset) whenever a device is new or better identified
         :param cancel: threading.Event that stops listening early
         """
-        from scapy.all import AsyncSniffer  # lazy: importing scapy costs ~1 s
-
         self.on_asset = on_asset
+        if self.cache_only:
+            return self._watch_cache(on_progress, cancel)
+
+        from scapy.all import AsyncSniffer  # imported only for explicitly requested packet capture
         if not self.iface:
             self.iface = self._select_iface()
             if not self.iface:
@@ -216,5 +219,32 @@ class PassiveDiscovery:
                 pass
         if on_progress:
             on_progress(self.timeout, self.timeout, f"Listening on {self.iface}")  # marks the stage complete
+        assets = list(self.devices.values())
+        return assets, len(assets)
+
+    def _watch_cache(self, on_progress, cancel):
+        """Observe cached neighbours without transmitting or installing a capture driver.
+
+        Entries can be stale. Silent devices absent from the OS cache cannot be
+        discovered by this method, so the evidence is labelled in every record.
+        """
+        from discovr.network import read_arp_cache
+
+        start = time.monotonic()
+        try:
+            while time.monotonic() - start < self.timeout:
+                if cancel is not None and cancel.is_set():
+                    break
+                for ip, mac in read_arp_cache().items():
+                    self._seen(mac, ip=ip, via="OS neighbour cache (may be stale)")
+                if on_progress:
+                    on_progress(int(time.monotonic() - start), self.timeout, "Watching OS neighbour cache")
+                delay = min(1, max(0, self.timeout - (time.monotonic() - start)))
+                if cancel is not None:
+                    cancel.wait(delay)
+                else:
+                    time.sleep(delay)
+        except KeyboardInterrupt:
+            log.info("[+] Stopped watching the neighbour cache")
         assets = list(self.devices.values())
         return assets, len(assets)

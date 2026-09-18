@@ -126,6 +126,8 @@
 
           <fieldset class="fields" data-kind="passive" hidden>
             <legend class="sr-only">Passive listening options</legend>
+            <p class="hint">By default, watches the OS neighbour cache across local interfaces. No installation, admin rights or packets sent. Cached entries may be stale; silent devices may be missing.</p>
+            <label class="check"><input id="f-capture-packets" name="capturePackets" type="checkbox"><span>Use packet capture (requires capture rights and a driver)</span></label>
             <div class="field">
               <label for="f-iface">Interface</label>
               <select id="f-iface" name="iface"></select>
@@ -134,7 +136,7 @@
               <label for="f-duration">Listen for (seconds)</label>
               <input id="f-duration" name="duration" type="number" inputmode="numeric" min="10" max="3600" value="120">
             </div>
-            <p class="hint">Sends no packets. Learns devices from ARP, DHCP, mDNS, NetBIOS, LLMNR and SSDP.</p>
+            <p class="hint">Packet capture can learn hostnames and OS hints from ARP, DHCP, mDNS, NetBIOS, LLMNR and SSDP. Cache observation provides IP/MAC evidence only.</p>
           </fieldset>
 
           <fieldset class="fields" data-kind="ad" hidden>
@@ -180,7 +182,13 @@
               <input id="f-region" name="region" autocomplete="off" spellcheck="false" value="all" aria-describedby="h-region">
               <p class="hint" id="h-region">"all" scans every region enabled on the account.</p>
             </div>
-            <p class="hint">Uses <code>aws configure</code> / <code>aws sso login</code> or environment credentials.</p>
+            <details><summary>Credentials for this scan (no AWS CLI needed)</summary>
+              <div class="field"><label for="f-access-key">Access key ID</label><input id="f-access-key" name="accessKey" autocomplete="off"></div>
+              <div class="field"><label for="f-secret-key">Secret access key</label><input id="f-secret-key" name="secretKey" type="password" autocomplete="off"></div>
+              <div class="field"><label for="f-session-token">Session token (temporary credentials)</label><input id="f-session-token" name="sessionToken" type="password" autocomplete="off"></div>
+              <p class="hint">Used in memory for this scan only. Prefer temporary credentials with read-only permissions.</p>
+            </details>
+            <p class="hint">Or use an existing AWS profile, SSO login or environment credentials.</p>
           </fieldset>
 
           <fieldset class="fields" data-kind="azure" hidden>
@@ -189,7 +197,13 @@
               <label for="f-subscription">Subscription ID <small>(optional)</small></label>
               <input id="f-subscription" name="subscription" autocomplete="off" spellcheck="false" placeholder="All enabled subscriptions">
             </div>
-            <p class="hint">Uses your <code>az login</code> session, a managed identity, or AZURE_* environment variables.</p>
+            <details><summary>Credentials for this scan (no Azure CLI needed)</summary>
+              <div class="field"><label for="f-tenant-id">Tenant ID</label><input id="f-tenant-id" name="tenantId" autocomplete="off"></div>
+              <div class="field"><label for="f-client-id">Application (client) ID</label><input id="f-client-id" name="clientId" autocomplete="off"></div>
+              <div class="field"><label for="f-client-secret">Client secret</label><input id="f-client-secret" name="clientSecret" type="password" autocomplete="off"></div>
+              <p class="hint">Use an application with Reader access. Credentials remain in memory for this scan only.</p>
+            </details>
+            <p class="hint">Or use an existing <code>az login</code> session, managed identity or AZURE_* environment variables.</p>
           </fieldset>
 
           <fieldset class="fields" data-kind="gcp" hidden>

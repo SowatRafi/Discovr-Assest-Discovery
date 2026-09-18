@@ -33,7 +33,7 @@ def port_set(value) -> set:
     for item in items:
         token = str(item).strip().lower()
         if token in ("*", "any", "all"):
-            # ponytail: expands to 65k ints; fine for the rare "allow any" cloud rule.
+            # Bound the expansion to the finite TCP/UDP port space.
             return set(range(1, 65536))
         low, _, high = token.partition("-")
         if low.isdigit() and (high.isdigit() or not high):
@@ -59,6 +59,11 @@ class Tagger:
         host = str(asset.get("Hostname", "")).lower()
         os_name = str(asset.get("OS", "")).lower()
         ports = port_set(asset.get("Ports"))
+
+        # Cloud APIs enumerate VMs, and their Ports describe firewall permissions,
+        # not listening services. An allow-all rule is not evidence of a printer.
+        if asset.get("Cloud"):
+            return "[Server]"
 
         # Network gear first: "Cisco IOS" must not be mistaken for Apple iOS below.
         if any(k in os_name for k in NETWORK_OS_HINTS) or any(k in host for k in NETWORK_HOST_HINTS):

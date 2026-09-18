@@ -61,3 +61,31 @@ class FakeSession:
 
 def test_aggregated_list_pagination():
     assert [i["name"] for i in _gcp_list(FakeSession(), "url", aggregated=True)] == ["a", "b"]
+
+
+def test_ingress_without_source_defaults_to_all_ipv4():
+    rules = [{"network": NETWORK, "allowed": [{"IPProtocol": "tcp", "ports": ["443"]}]}]
+    assert firewall_ports(INSTANCE, rules) == ({"443"}, {"443"})
+    rules[0]["sourceTags"] = ["trusted"]
+    assert firewall_ports(INSTANCE, rules) == ({"443"}, set())
+
+
+def test_public_ipv6_is_not_reported_as_isolated():
+    import copy
+    instance = copy.deepcopy(INSTANCE)
+    nic = instance["networkInterfaces"][0]
+    nic.pop("accessConfigs")
+    nic["ipv6AccessConfigs"] = [{"externalIpv6": "2001:db8::1"}]
+    rules = [{"network": NETWORK, "sourceRanges": ["::/0"], "allowed": [{"IPProtocol": "tcp", "ports": ["443"]}]}]
+    asset = instance_to_asset(instance, "p1", rules)
+    assert asset["InternetExposed"] and asset["PublicIPv6"] == ["2001:db8::1"]
+
+
+def test_repeated_page_token_fails_instead_of_looping():
+    import pytest
+    class RepeatedSession:
+        def get(self, *args, **kwargs):
+            return type("Response", (), {"status_code": 200, "json": lambda _: {"nextPageToken": "same"}})()
+
+    with pytest.raises(RuntimeError, match="repeated pagination"):
+        _gcp_list(RepeatedSession(), "url")

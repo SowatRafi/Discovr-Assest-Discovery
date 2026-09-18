@@ -148,3 +148,22 @@ def test_missing_certificate_or_key_files_are_field_errors(ui):
     assert status == 400 and err["field"] == "caFile"
     status, _, err = request(port, "POST", "/api/scans", token, {"kind": "gcp", "credentialsFile": "/nope.json"})
     assert status == 400 and err["field"] == "credentialsFile"
+
+
+@pytest.mark.parametrize("path,body", [
+    ("/api/scans", []), ("/api/scans", "network"), ("/api/export", []),
+    ("/api/export", {"format": "csv", "ids": [{}]}),
+    ("/api/scans", {"kind": "network", "target": "127.0.0.1", "intensity": "invalid"}),
+    ("/api/scans", {"kind": "network", "target": {}, "osDetect": False}),
+    ("/api/scans", {"kind": "network", "target": "127.0.0.1", "osDetect": "false"}),
+    ("/api/assets/import", [{"IP": "10.0.0.1", "InternetExposed": "false"}]),
+    ("/api/assets/import", [{"IP": "10.0.0.1"}, {"IP": {"bad": "value"}}]),
+])
+def test_invalid_payloads_are_client_errors_and_do_not_mutate_inventory(ui, path, body):
+    port, token = ui
+    assert request(port, "POST", path, token, body)[0] == 400
+    assert request(port, "GET", "/api/assets", token)[2]["assets"] == []
+
+
+def test_invalid_poll_cursor_is_a_client_error(ui):
+    assert request(*[ui[0], "GET", "/api/state?since=invalid", ui[1]])[0] == 400

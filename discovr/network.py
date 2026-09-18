@@ -28,8 +28,8 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from discovr.lookup import lookup_many
 
 log = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ def local_subnet() -> str:
         for addr in addresses:
             if addr.family == socket.AF_INET and addr.address == ip and addr.netmask:
                 return str(ipaddress.IPv4Network(f"{ip}/{addr.netmask}", strict=False))
-    # ponytail: assume /24 when the OS hides the netmask; the user can edit the range.
+    # Fall back to a /24 when the OS hides the netmask; the user can edit the range.
     return str(ipaddress.IPv4Network(f"{ip}/24", strict=False))
 
 
@@ -179,9 +179,8 @@ def _abort_on_close(sock):
 async def probe(ip, port, timeout):
     """TCP connect probe: True = open, False = closed but host alive (RST), None = no answer.
 
-    ponytail: Windows retries a refused SYN for ~2s, so on Windows scanners "closed"
-    usually times out as "no answer"; local hosts are still found via the ARP cache.
-    Upgrade path if remote closed-only hosts matter: WSAIoctl(SIO_TCP_INITIAL_RTO) via ctypes.
+    Windows may retry a refused SYN, so a short timeout on a closed port
+    can look like "no answer"; the ARP cache provides additional local-segment evidence.
     """
     loop = asyncio.get_running_loop()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -246,19 +245,36 @@ def parse_nmap_xml(xml_text) -> dict:
     return result
 
 
-def nmap_os_detect(hosts, ports=TOP_PORTS) -> dict:
+def nmap_os_detect(hosts, ports=TOP_PORTS, cancel=None, intensity="normal") -> dict:
     """Run one batched `nmap -O` over live hosts (needs nmap on PATH and admin/root)."""
     exe = shutil.which("nmap")
     if not exe:
         raise RuntimeError("nmap is not installed or not on PATH")
     found = {}
     for i in range(0, len(hosts), 256):  # chunk to stay under command-line length limits
-        cmd = [exe, "-O", "--osscan-guess", "-Pn", "-n", "-T4", "--max-os-tries", "1",
+        if cancel is not None and cancel.is_set():
+            break
+        timing = {"gentle": "-T2", "normal": "-T3", "aggressive": "-T4"}[intensity]
+        cmd = [exe, "-O", "--osscan-guess", "-Pn", "-n", timing, "--max-os-tries", "1",
                "-p", ",".join(map(str, ports)), "-oX", "-", *hosts[i:i + 256]]
-        out = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=1800)
-        if out.returncode != 0 or "<nmaprun" not in out.stdout:
-            raise RuntimeError(out.stderr.strip().splitlines()[-1] if out.stderr.strip() else "nmap failed")
-        found.update(parse_nmap_xml(out.stdout))
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, errors="replace") as process:
+            deadline = time.monotonic() + 1800
+            while True:
+                if (cancel is not None and cancel.is_set()) or time.monotonic() >= deadline:
+                    process.kill()
+                    process.communicate()
+                    if cancel is not None and cancel.is_set():
+                        return found
+                    raise RuntimeError("nmap OS detection timed out")
+                try:
+                    stdout, stderr = process.communicate(timeout=0.2)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            if process.returncode != 0 or "<nmaprun" not in stdout:
+                raise RuntimeError(stderr.strip().splitlines()[-1] if stderr.strip() else "nmap failed")
+            found.update(parse_nmap_xml(stdout))
     return found
 
 
@@ -282,7 +298,9 @@ class NetworkDiscovery:
         self.ports = parse_port_spec(ports) if ports else None
         self.intensity = intensity
         self.concurrency, self.timeout = INTENSITY[intensity]
-        if parallel:
+        if parallel is not None:
+            if not 1 <= parallel <= 4096:
+                raise ValueError("parallel must be between 1 and 4096")
             self.concurrency = max(1, int(parallel))
         self.os_detect = os_detect
 
@@ -348,31 +366,32 @@ class NetworkDiscovery:
                   "Ports": ",".join(map(str, sorted(open_ports[ip]))) or "None", "Source": "Network"})
 
         # Phase 3: extended ports on live hosts, with name lookups running alongside.
-        loop = asyncio.get_running_loop()
-        with ThreadPoolExecutor(max_workers=64, thread_name_prefix="discovr-dns") as dns_pool:
-            async def resolve(ip):
-                """Reverse DNS (falls back to NetBIOS on Windows); "Unknown" if slow or missing."""
-                try:
-                    return (await asyncio.wait_for(loop.run_in_executor(dns_pool, socket.gethostbyaddr, ip), 3))[0]
-                except (OSError, ValueError, asyncio.TimeoutError):  # no PTR record, bad name, or too slow
-                    return "Unknown"
+        names = asyncio.create_task(lookup_many(live, lambda ip: socket.gethostbyaddr(ip)[0], "Unknown", cancel))
+        if not self.ports and live and not (cancel is not None and cancel.is_set()):
+            extra = [p for p in TOP_PORTS if p not in SWEEP_PORTS]
+            await self._probe_many(((h, p) for h in live for p in extra), len(live) * len(extra),
+                                   f"Fingerprinting {len(live)} live hosts", record, progress, cancel)
+        progress(0, 0, "Resolving names")
+        hostnames = dict(zip(live, await names))
+        banners = {}
+        ssh_hosts = iter(ip for ip in live if 22 in open_ports[ip])
 
-            names = asyncio.gather(*(resolve(ip) for ip in live))
-            if not self.ports and live and not (cancel is not None and cancel.is_set()):
-                extra = [p for p in TOP_PORTS if p not in SWEEP_PORTS]
-                await self._probe_many(((h, p) for h in live for p in extra), len(live) * len(extra),
-                                       f"Fingerprinting {len(live)} live hosts", record, progress, cancel)
-            progress(0, 0, "Resolving names")
-            hostnames = dict(zip(live, await names))
-        ssh_hosts = [ip for ip in live if 22 in open_ports[ip]]
-        banners = dict(zip(ssh_hosts, await asyncio.gather(*(ssh_banner(ip) for ip in ssh_hosts))))
+        async def read_banners():
+            for ip in ssh_hosts:
+                if cancel is not None and cancel.is_set():
+                    return
+                banners[ip] = await ssh_banner(ip)
+
+        # Fingerprinting must obey a concurrency bound too, even for a full /16.
+        await asyncio.gather(*(read_banners() for _ in range(min(32, self.concurrency))))
 
         # Phase 4 (optional): nmap OS fingerprinting for everything that answered.
         nmap_os = {}
         if self.os_detect and live and not (cancel is not None and cancel.is_set()):
             progress(0, 0, "Running nmap OS detection")
             try:
-                nmap_os = await asyncio.to_thread(nmap_os_detect, live)
+                nmap_os = await asyncio.to_thread(nmap_os_detect, live, self.ports or TOP_PORTS,
+                                                  cancel, self.intensity)
             except (RuntimeError, OSError, subprocess.SubprocessError, ET.ParseError) as exc:
                 log.warning(f"[!] nmap OS detection skipped: {exc}")
 

@@ -11,6 +11,7 @@ Heavy optional modules (cloud SDKs, scapy, LDAP) are imported inside their branc
 startup stays fast for everything else.
 """
 import argparse
+import json
 import getpass
 import logging
 import os
@@ -53,6 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="discovr", description="Discovr - asset discovery for networks, "
                                      "Active Directory and cloud. Run without options to open the web interface.")
     parser.add_argument("--version", action="version", version=f"Discovr {__version__}")
+    parser.add_argument("--diagnostics", action="store_true", help="check bundled features offline and print JSON")
+    parser.add_argument("--licenses", action="store_true", help="print bundled third-party licence notices")
 
     ui = parser.add_argument_group("web interface")
     ui.add_argument("--ui", action="store_true", help="open the web interface (the default with no scan options)")
@@ -90,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     passive = parser.add_argument_group("passive discovery (listen only; needs capture rights)")
     passive.add_argument("--passive", action="store_true", help="learn devices from ARP/DHCP/mDNS/NetBIOS traffic")
+    passive.add_argument("--packet-capture", action="store_true",
+                         help="use packet capture instead of the OS neighbour cache (needs capture rights/driver)")
     passive.add_argument("--iface", help="network interface (asked interactively if omitted)")
     passive.add_argument("--timeout", type=int, default=180, help="listening time in seconds (default: 180)")
 
@@ -177,6 +182,7 @@ def run_scan(feature, args):
         scanner = CloudDiscovery(args.cloud, profile=args.profile, region=args.region, subscription=args.subscription,
                                  project=args.project, zone=args.zone, credentials_file=args.gcp_credentials)
         assets = scanner.run()
+        args.scan_incomplete = bool(getattr(scanner, "warnings", []))
         return assets, len(assets), "cloud assets"
 
     if feature == "ad":
@@ -190,26 +196,60 @@ def run_scan(feature, args):
         password = args.password or os.environ.get("DISCOVR_AD_PASSWORD") \
             or getpass.getpass(f"Password for {args.username}: ")
         print(f"[+] Discovering Active Directory assets in {args.domain}")
-        assets = ADDiscovery(args.domain, args.username, password, dc=args.dc, use_ldaps=args.ldaps,
-                             ca_file=args.ca_file).run()
+        scanner = ADDiscovery(args.domain, args.username, password, dc=args.dc, use_ldaps=args.ldaps,
+                              ca_file=args.ca_file)
+        assets = scanner.run()
+        args.scan_incomplete = bool(getattr(scanner, "warnings", []))
         return assets, len(assets), "AD assets"
 
     from discovr.passive import PassiveDiscovery
 
     print("[+] Running passive discovery")
-    assets, _ = PassiveDiscovery(iface=args.iface, timeout=args.timeout).run(on_progress=print_progress)
+    assets, _ = PassiveDiscovery(iface=args.iface, timeout=args.timeout,
+                                 cache_only=not args.packet_capture).run(on_progress=print_progress)
     return assets, len(assets), "passive assets"
 
 
 def main(argv=None):
     """Parse arguments, run a scan (or the web UI) and save the report."""
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.licenses:
+        from pathlib import Path
+        path = Path(__file__).with_name("THIRD_PARTY_NOTICES.txt")
+        if not path.is_file():
+            print("Licence notices are generated when building the portable binary.")
+        else:
+            print(path.read_text(encoding="utf-8"))
+        return
+    if args.diagnostics:
+        from discovr.diagnostics import check_runtime
+        result = check_runtime()
+        print(json.dumps(result, indent=2))
+        if not result["ok"]:
+            sys.exit(1)
+        return
+    modes = [bool(args.scan_network or args.autoipaddr), bool(args.cloud), args.ad, args.passive, args.ui]
+    if sum(modes) > 1:
+        parser.error("select one discovery mode, or use --ui to run several scans")
+    if args.autoipaddr and args.scan_network:
+        parser.error("choose --autoipaddr or --scan-network, not both")
+    if not 0 <= args.port <= 65535:
+        parser.error("--port must be between 0 and 65535")
+    if args.timeout <= 0:
+        parser.error("--timeout must be a positive number of seconds")
+    if args.packet_capture and not args.passive:
+        parser.error("--packet-capture requires --passive")
     feature = selected_feature(args)
     if feature is None:
         # No scan options (or --ui): the local web interface - also what a double-click starts.
         from discovr.server import serve
 
-        serve(port=args.port, open_browser=not args.no_browser)
+        try:
+            serve(port=args.port, open_browser=not args.no_browser)
+        except OSError as exc:
+            print(f"[!] Could not start the dashboard: {exc}", file=sys.stderr)
+            sys.exit(1)
         return
 
     try:
@@ -224,8 +264,15 @@ def main(argv=None):
         print(f"[!] Fatal error: {exc}")
         sys.exit(1)
 
-    Reporter.print_results(assets, scanned, context)
-    handle_export(assets, feature, timestamp, args)
+    try:
+        Reporter.print_results(assets, scanned, context)
+        handle_export(assets, feature, timestamp, args)
+    except OSError as exc:
+        print(f"[!] Could not save the report: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if getattr(args, "scan_incomplete", False):
+        print("[!] Scan has incomplete coverage. Review the warnings and saved results.", file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

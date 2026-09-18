@@ -268,6 +268,7 @@ input[aria-invalid="true"] { border-color: var(--critical); }
 .pill.done .icon { color: var(--good); }
 .pill.error .icon { color: var(--critical); }
 .pill.cancelled .icon { color: var(--text-3); }
+.pill.partial .icon { color: var(--high); }
 .progress { position: relative; height: 6px; margin: 10px 0 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .progress > span { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 3px; background: var(--accent); transition: width 300ms var(--ease); }
 .progress.indeterminate > span { width: 35%; animation: slide 1.2s var(--ease) infinite; }

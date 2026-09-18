@@ -13,8 +13,10 @@ Authentication is azure-identity's DefaultAzureCredential, resolved at runtime:
 """
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlsplit
 
 from discovr.tagger import port_sort_key
+from discovr.scan import ScanControl
 
 log = logging.getLogger(__name__)
 
@@ -44,8 +46,8 @@ def _segment(resource_id, key) -> str:
 def nsg_ports(nsg) -> tuple:
     """(allowed, internet-exposed) inbound TCP/UDP port tokens from an NSG's custom rules.
 
-    ponytail: unions Allow rules and ignores Deny rules and priorities, so exposure can be
-    over-reported (the safe direction for triage). Upgrade: evaluate rules in priority order.
+    Unions Allow rules. This is potential exposure only: Deny rules, priorities and
+    effective routing must be considered separately when assessing reachability.
     """
     allowed, exposed = set(), set()
     for rule in nsg.get("properties", {}).get("securityRules", []):
@@ -120,6 +122,7 @@ def build_assets(subscription, vms, statuses, nics, public_ips, nsgs) -> list:
             "Ports": ",".join(sorted(allowed, key=port_sort_key)) or "None",
             "ExposedPorts": ",".join(sorted(exposed, key=port_sort_key)) or "None",
             "InternetExposed": bool(public and exposed),
+            "ExposureAssessment": "Potential exposure from allow rules; priorities, routing and deny rules not evaluated",
             "Source": "Azure",
             "Cloud": "Azure",
             "SubscriptionID": subscription,
@@ -144,13 +147,29 @@ def build_assets(subscription, vms, statuses, nics, public_ips, nsgs) -> list:
     return assets
 
 
-def _arm_list(token, url) -> list:
+def _arm_list(token, url, control=None) -> list:
     """GET an ARM collection, following nextLink pagination; raises RuntimeError on API errors."""
     import requests
 
-    items = []
+    control = control or ScanControl()
+    items, visited = [], set()
     while url:
-        resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
+        control.check()
+        # Pagination URLs carry our bearer token. Never forward it to another origin,
+        # and reject cycles instead of looping forever on a broken API response.
+        parsed = urlsplit(url)
+        if parsed.scheme != "https" or parsed.netloc != "management.azure.com" or parsed.username:
+            raise RuntimeError("Azure returned an unexpected pagination origin")
+        if url in visited:
+            raise RuntimeError("Azure returned a repeated pagination URL")
+        visited.add(url)
+        try:
+            resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=(5, 15),
+                                allow_redirects=False)
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Azure request failed: {exc.__class__.__name__}") from exc
+        if 300 <= resp.status_code < 400:
+            raise RuntimeError("Azure API redirects are not accepted")
         if resp.status_code >= 400:
             try:
                 detail = resp.json().get("error", {}).get("message") or resp.text[:200]
@@ -166,29 +185,38 @@ def _arm_list(token, url) -> list:
 class AzureDiscovery:
     """Lists virtual machines in one subscription, or in every enabled subscription."""
 
-    def __init__(self, subscription=None, credential=None):
+    def __init__(self, subscription=None, credential=None, runtime_credentials=None):
         """
         :param subscription: subscription ID; None scans every subscription the identity can see
         :param credential: optional azure-identity credential (default: DefaultAzureCredential)
         """
         self.subscription = subscription
         self.credential = credential
+        self.runtime_credentials = runtime_credentials or {}
+        self.warnings = []
 
     def _token(self) -> str:
         """ARM access token from the runtime credential chain."""
         from azure.core.exceptions import ClientAuthenticationError
-        from azure.identity import DefaultAzureCredential
+        from azure.identity import DefaultAzureCredential, ClientSecretCredential
 
-        credential = self.credential or DefaultAzureCredential()
+        supplied = self.runtime_credentials
+        credential = self.credential or (ClientSecretCredential(
+            supplied["tenantId"], supplied["clientId"], supplied["clientSecret"])
+            if supplied else DefaultAzureCredential())
         try:
             return credential.get_token(f"{ARM}/.default").token
         except ClientAuthenticationError as exc:
             raise RuntimeError("No usable Azure credentials - run `az login`, or set AZURE_TENANT_ID, "
                                f"AZURE_CLIENT_ID and AZURE_CLIENT_SECRET ({str(exc).splitlines()[0]})")
+        finally:
+            if self.credential is None:
+                credential.close()
 
     @staticmethod
-    def _scan_subscription(token, subscription) -> list:
+    def _scan_subscription(token, subscription, control=None) -> list:
         """The five list calls for one subscription, fetched concurrently, then joined."""
+        control = control or ScanControl()
         base = f"{ARM}/subscriptions/{subscription}/providers"
         urls = {
             "vms": f"{base}/Microsoft.Compute/virtualMachines?api-version={COMPUTE_API}",
@@ -197,17 +225,44 @@ class AzureDiscovery:
             "public_ips": f"{base}/Microsoft.Network/publicIPAddresses?api-version={NETWORK_API}",
             "nsgs": f"{base}/Microsoft.Network/networkSecurityGroups?api-version={NETWORK_API}",
         }
-        with ThreadPoolExecutor(max_workers=len(urls)) as pool:
-            lists = dict(zip(urls, pool.map(lambda url: _arm_list(token, url), urls.values())))
-        return build_assets(subscription, **lists)
+        lists = {}
+        unavailable = []
+        for name, url in urls.items():
+            control.progress(0, 0, f"Azure {subscription}: reading {name}")
+            try:
+                lists[name] = _arm_list(token, url, control)
+                if name == "vms":
+                    for asset in build_assets(subscription, lists[name], [], [], [], []):
+                        asset.update(Ports="Unknown", ExposedPorts="Unknown", InternetExposed=None,
+                                     ExposureAssessment="Unknown: network metadata pending")
+                        control.emit(asset)
+            except RuntimeError as exc:
+                if name == "vms":
+                    raise
+                control.warn(f"{subscription}: {name} unavailable ({exc})")
+                lists[name] = []
+                unavailable.append(name)
+        assets = build_assets(subscription, **lists)
+        for asset in assets:
+            if set(unavailable) & {"nics", "public_ips", "nsgs"}:
+                asset.update(InternetExposed=None, ExposureAssessment="Unknown: network metadata unavailable")
+                if "nsgs" in unavailable:
+                    asset.update(Ports="Unknown", ExposedPorts="Unknown")
+            if "statuses" in unavailable:
+                asset["VMAgent"] = "Unknown: runtime status unavailable"
+            control.emit(asset)
+        return assets
 
-    def run(self):
+    def run(self, on_progress=None, on_asset=None, cancel=None):
         """Return VM assets; subscriptions that fail are reported, the rest still returned."""
+        control = ScanControl(on_progress, on_asset, cancel)
+        self.warnings = control.warnings
+        control.progress(0, 0, "Authenticating with Azure")
         token = self._token()
         if self.subscription:
             subscriptions = [self.subscription]
         else:
-            subscriptions = [s["subscriptionId"] for s in _arm_list(token, f"{ARM}/subscriptions?api-version=2022-12-01")
+            subscriptions = [s["subscriptionId"] for s in _arm_list(token, f"{ARM}/subscriptions?api-version=2022-12-01", control)
                              if s.get("state") == "Enabled"]
             if not subscriptions:
                 raise RuntimeError("This Azure identity cannot see any enabled subscription")
@@ -215,13 +270,13 @@ class AzureDiscovery:
 
         assets, errors = [], []
         with ThreadPoolExecutor(max_workers=min(8, len(subscriptions))) as pool:
-            futures = [(sub, pool.submit(self._scan_subscription, token, sub)) for sub in subscriptions]
+            futures = [(sub, pool.submit(self._scan_subscription, token, sub, control)) for sub in subscriptions]
             for sub, future in futures:
                 try:
                     assets.extend(future.result())
                 except RuntimeError as exc:
                     errors.append(str(exc))
-                    log.warning(f"[!] Subscription {sub}: {exc}")
+                    control.warn(f"Subscription {sub}: {exc}")
         if errors and not assets:
             raise RuntimeError(errors[0])
         for a in assets:

@@ -3,22 +3,24 @@
 AD is often the most complete list of domain-joined machines - it includes hosts that
 are powered off or on another subnet during a network scan. Security and privacy choices:
 
-* The password is never exposed, even to an attacker in the middle. A simple bind (which
+* A simple bind (which
   carries the password) only happens inside a TLS channel whose certificate *verified*
   (system trust store, or --ca-file for an internal CA); otherwise Discovr uses NTLM
   challenge-response. The previous code used a plain LDAP simple bind, exposing the domain
   password to anyone sniffing the LAN.
-* Only one bind attempt is made per mechanism, so a typo cannot lock the account out.
+* Only one bind attempt is made per mechanism; repeated retries can trigger account lockout.
 * Paged searches: AD caps unpaged results at 1,000 entries, which silently truncated
   larger domains before.
 * Data minimisation: free-text attributes such as `description` are not collected -
   admins sometimes store passwords there, and reports get shared widely.
 """
 import logging
+import asyncio
 import socket
 import ssl
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from discovr.lookup import lookup_many
+from discovr.scan import ScanControl
 
 log = logging.getLogger(__name__)
 
@@ -170,23 +172,35 @@ class ADDiscovery:
                                   "(if the DC requires LDAP signing, use --ldaps with --ca-file)")
         return conn, "NTLM (challenge-response)"
 
-    def run(self):
+    def run(self, on_progress=None, on_asset=None, cancel=None):
         """Return a list of computer assets; raises on connection or credential errors."""
+        control = ScanControl(on_progress, on_asset, cancel)
+        self.warnings = control.warnings
+        control.progress(0, 0, "Connecting to Active Directory")
         conn, method = self._connect()
         log.info(f"[+] Connected to {self.server_host} via {method}")
         try:
             results = conn.extend.standard.paged_search(
                 self.base_dn, "(objectClass=computer)", attributes=ATTRIBUTES, paged_size=500, generator=True)
-            assets = [computer_to_asset(r["dn"], r["attributes"]) for r in results
-                      if r.get("type") == "searchResEntry"]  # skip referrals to other domains
+            assets = []
+            for result in control.pages(results):
+                if result.get("type") == "searchResEntry":
+                    asset = computer_to_asset(result["dn"], result["attributes"])
+                    assets.append(control.emit(asset))
+                    control.progress(len(assets), 0, "Reading directory computers")
+            if conn.result and conn.result.get("result", 0) != 0:
+                control.warn(f"Directory search incomplete: {conn.result.get('description', 'search failed')}")
         finally:
             conn.unbind()
 
         # Resolve IPs in parallel; disabled accounts are skipped to save time.
         enabled = [a for a in assets if a["Enabled"]]
-        with ThreadPoolExecutor(max_workers=64, thread_name_prefix="discovr-ad-dns") as pool:
-            for asset, ip in zip(enabled, pool.map(_resolve, [a["Hostname"] for a in enabled])):
-                asset["IP"] = ip
+        control.progress(0, len(enabled), "Resolving directory computer names")
+        addresses = asyncio.run(lookup_many([a["Hostname"] for a in enabled], _resolve, "N/A", cancel))
+        for done, (asset, ip) in enumerate(zip(enabled, addresses), 1):
+            asset["IP"] = ip
+            control.emit(asset)
+            control.progress(done, len(enabled), "Resolving directory computer names")
 
         for asset in assets:
             log.info(f"    [+] AD Computer: {asset['IP']} ({asset['Hostname']}) | OS: {asset['OS']}")

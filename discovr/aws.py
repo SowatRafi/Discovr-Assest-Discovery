@@ -11,6 +11,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from discovr.tagger import port_sort_key
+from discovr.scan import ScanControl, ScanCancelled
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +51,8 @@ def instance_to_asset(instance, region, account, groups_by_id, ssm_by_id) -> dic
     tags = {t["Key"]: t["Value"] for t in instance.get("Tags", [])}
     private_ip = instance.get("PrivateIpAddress")
     public_ip = instance.get("PublicIpAddress")
+    public_v6 = [a["Ipv6Address"] for nic in instance.get("NetworkInterfaces", [])
+                 for a in nic.get("Ipv6Addresses", []) if a.get("Ipv6Address")]
     groups = [groups_by_id.get(g["GroupId"], {}) for g in instance.get("SecurityGroups", [])]
     allowed, exposed = group_exposure(groups)
     ssm = ssm_by_id.get(instance["InstanceId"], {})
@@ -62,7 +65,8 @@ def instance_to_asset(instance, region, account, groups_by_id, ssm_by_id) -> dic
         "OS": ssm_os or instance.get("PlatformDetails") or "Unknown",
         "Ports": ",".join(allowed) or "None",
         "ExposedPorts": ",".join(exposed) or "None",
-        "InternetExposed": bool(public_ip and exposed),
+        "InternetExposed": bool((public_ip or public_v6) and exposed),
+        "ExposureAssessment": "Potential exposure from allow rules; routing and deny controls not evaluated",
         "Source": "AWS",
         "Cloud": "AWS",
         "AccountID": account,
@@ -71,6 +75,7 @@ def instance_to_asset(instance, region, account, groups_by_id, ssm_by_id) -> dic
         "InstanceType": instance.get("InstanceType", "Unknown"),
         "State": instance.get("State", {}).get("Name", "Unknown"),
         "PublicIP": public_ip or "N/A",
+        "PublicIPv6": public_v6,
         "VPC": instance.get("VpcId", "N/A"),
         "Subnet": instance.get("SubnetId", "N/A"),
         "SecurityGroups": [g.get("GroupName", g["GroupId"]) for g in instance.get("SecurityGroups", [])],
@@ -85,7 +90,7 @@ def instance_to_asset(instance, region, account, groups_by_id, ssm_by_id) -> dic
 class AWSDiscovery:
     """Lists EC2 instances for the account behind the active AWS credentials."""
 
-    def __init__(self, profile=None, region="all", session=None):
+    def __init__(self, profile=None, region="all", session=None, runtime_credentials=None):
         """
         :param profile: named profile from ~/.aws/config (default: the standard credential chain)
         :param region: a region name, or "all" for every region enabled on the account
@@ -94,6 +99,9 @@ class AWSDiscovery:
         self.profile = profile
         self.region = region or "all"
         self.session = session
+        self.runtime_credentials = runtime_credentials or {}
+        self.control = ScanControl()
+        self.warnings = self.control.warnings
 
     def _session(self):
         """boto3 session, converting missing-credential errors into actionable messages."""
@@ -101,7 +109,19 @@ class AWSDiscovery:
         from botocore.exceptions import ProfileNotFound
 
         try:
-            return self.session or boto3.session.Session(profile_name=self.profile or None)
+            if self.session:
+                return self.session
+            from botocore.config import Config
+            credentials = self.runtime_credentials
+            if credentials:
+                session = boto3.session.Session(aws_access_key_id=credentials["accessKey"],
+                                                aws_secret_access_key=credentials["secretKey"],
+                                                aws_session_token=credentials.get("sessionToken"))
+            else:
+                session = boto3.session.Session(profile_name=self.profile or None)
+            session._session.set_default_client_config(Config(
+                connect_timeout=5, read_timeout=15, retries={"mode": "standard", "total_max_attempts": 2}))
+            return session
         except ProfileNotFound:
             raise RuntimeError(f"AWS profile '{self.profile}' not found - run `aws configure --profile {self.profile}`")
 
@@ -113,29 +133,49 @@ class AWSDiscovery:
         try:
             return sorted(r["RegionName"] for r in session.client("ec2", region_name=home).describe_regions()["Regions"])
         except Exception as exc:  # e.g. AccessDenied on ec2:DescribeRegions
-            log.warning(f"[!] Could not list AWS regions ({exc}); scanning {home} only")
+            self.control.warn(f"Could not list AWS regions ({exc}); scanning {home} only")
             return [home]
 
     @staticmethod
-    def _scan_region(region, account, ec2, ssm):
+    def _scan_region(region, account, ec2, ssm, control=None):
         """Security groups + instances + SSM agents for one region, joined into assets."""
-        groups = {g["GroupId"]: g for page in ec2.get_paginator("describe_security_groups").paginate()
-                  for g in page["SecurityGroups"]}
+        control = control or ScanControl()
         try:
-            ssm_by_id = {i["InstanceId"]: i for page in ssm.get_paginator("describe_instance_information").paginate()
+            groups = {g["GroupId"]: g for page in control.pages(ec2.get_paginator("describe_security_groups").paginate())
+                      for g in page["SecurityGroups"]}
+        except ScanCancelled:
+            raise
+        except Exception as exc:
+            control.warn(f"{region}: security groups unavailable ({exc.__class__.__name__}); exposure unknown")
+            groups = None
+        try:
+            ssm_by_id = {i["InstanceId"]: i for page in control.pages(ssm.get_paginator("describe_instance_information").paginate())
                          for i in page["InstanceInformationList"]}
+        except ScanCancelled:
+            raise
         except Exception as exc:  # SSM is optional context; missing permission must not fail the scan
-            log.warning(f"[!] {region}: SSM agent status unavailable ({exc.__class__.__name__})")
+            control.warn(f"{region}: SSM agent status unavailable ({exc.__class__.__name__})")
             ssm_by_id = {}
         pages = ec2.get_paginator("describe_instances").paginate(
             Filters=[{"Name": "instance-state-name", "Values": LIVE_STATES}])
-        return [instance_to_asset(inst, region, account, groups, ssm_by_id)
-                for page in pages for reservation in page["Reservations"] for inst in reservation["Instances"]]
+        assets = []
+        for page in control.pages(pages):
+            for reservation in page["Reservations"]:
+                for inst in reservation["Instances"]:
+                    asset = instance_to_asset(inst, region, account, groups or {}, ssm_by_id)
+                    if groups is None:
+                        asset.update(Ports="Unknown", ExposedPorts="Unknown", InternetExposed=None,
+                                     ExposureAssessment="Unknown: security groups unavailable")
+                    assets.append(control.emit(asset))
+        return assets
 
-    def run(self):
+    def run(self, on_progress=None, on_asset=None, cancel=None):
         """Return EC2 assets from every requested region; raises on credential problems."""
         from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
+        self.control = control = ScanControl(on_progress, on_asset, cancel)
+        self.warnings = control.warnings
+        control.progress(0, 0, "Authenticating with AWS")
         session = self._session()
         try:
             account = session.client("sts", region_name=session.region_name or "us-east-1") \
@@ -146,18 +186,22 @@ class AWSDiscovery:
             raise RuntimeError(f"AWS authentication failed: {exc}")
 
         regions = self._regions(session)
+        if not regions:
+            raise RuntimeError("No enabled AWS regions were returned")
+        control.check()
         log.info(f"[+] AWS account {account}: scanning {len(regions)} region(s)")
         # boto3 sessions are not thread-safe, so clients are created here, then used in threads.
         clients = {r: (session.client("ec2", region_name=r), session.client("ssm", region_name=r)) for r in regions}
         assets, errors = [], []
         with ThreadPoolExecutor(max_workers=min(16, len(regions))) as pool:
-            futures = {r: pool.submit(self._scan_region, r, account, *clients[r]) for r in regions}
-            for region, future in futures.items():
+            futures = {r: pool.submit(self._scan_region, r, account, *clients[r], control) for r in regions}
+            for done, (region, future) in enumerate(futures.items(), 1):
                 try:
                     assets.extend(future.result())
                 except (ClientError, BotoCoreError) as exc:  # one broken region must not hide the others
                     errors.append(f"{region}: {exc}")
-                    log.warning(f"[!] {region}: {exc}")
+                    control.warn(f"{region}: {exc}")
+                control.progress(done, len(regions), "Scanning AWS regions")
         if errors and not assets and len(errors) == len(regions):
             raise RuntimeError(f"AWS discovery failed in every region - {errors[0]}")
         for a in assets:
