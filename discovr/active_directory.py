@@ -1,57 +1,172 @@
+"""Active Directory discovery: enumerate computer accounts over LDAP.
+
+AD is often the most complete list of domain-joined machines - it includes hosts that
+are powered off or on another subnet during a network scan. Security and privacy choices:
+
+* The password never crosses the wire in cleartext. LDAPS (636) when requested,
+  otherwise StartTLS on 389, otherwise NTLM challenge-response. The previous code used
+  a plain LDAP simple bind, exposing the domain password to anyone sniffing the LAN.
+* Only one bind attempt is made per mechanism, so a typo cannot lock the account out.
+* Paged searches: AD caps unpaged results at 1,000 entries, which silently truncated
+  larger domains before.
+* Data minimisation: free-text attributes such as `description` are not collected -
+  admins sometimes store passwords there, and reports get shared widely.
+"""
 import logging
 import socket
+import ssl
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 
-try:
-    from ldap3 import Server, Connection, ALL
-    ad_available = True
-except ImportError:
-    ad_available = False
+log = logging.getLogger(__name__)
+
+UAC_ACCOUNTDISABLE = 0x2         # userAccountControl flag: computer account disabled
+UAC_SERVER_TRUST = 0x2000        # userAccountControl flag: domain controller
+STALE_AFTER_DAYS = 90            # no logon for this long => machine is probably gone
+ATTRIBUTES = ["cn", "dNSHostName", "operatingSystem", "operatingSystemVersion",
+              "lastLogonTimestamp", "userAccountControl"]
+
+
+def _first(value):
+    """LDAP values arrive as lists without a schema, scalars with one; return the first/only item."""
+    if isinstance(value, (list, tuple)):
+        return value[0] if value else None
+    return value
+
+
+def filetime_to_datetime(value):
+    """AD FILETIME (100 ns ticks since 1601, as int, str or datetime) -> aware datetime or None."""
+    value = _first(value)
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        ticks = int(value)
+    except (TypeError, ValueError):
+        return None
+    if ticks <= 0:
+        return None  # 0 = never logged on
+    return datetime(1601, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=ticks // 10)
+
+
+def ou_path(dn) -> str:
+    """Organisational-unit path, top-down: "CN=PC1,OU=Laptops,OU=HQ,DC=corp" -> "HQ/Laptops"."""
+    from ldap3.utils.dn import parse_dn  # handles escaped commas in names
+
+    try:
+        return "/".join(reversed([value for attr, value, _ in parse_dn(dn) if attr.upper() == "OU"]))
+    except Exception:  # malformed DN from a broken directory - the OU is only context
+        return ""
+
+
+def computer_to_asset(dn, attrs, now=None) -> dict:
+    """Turn one LDAP computer entry into a Discovr asset (IP is resolved later)."""
+    now = now or datetime.now(timezone.utc)
+    fqdn = str(_first(attrs.get("dNSHostName")) or _first(attrs.get("cn")) or "Unknown")
+    os_name = " ".join(str(_first(attrs.get(k)) or "") for k in ("operatingSystem", "operatingSystemVersion"))
+    uac = int(_first(attrs.get("userAccountControl")) or 0)
+    last_logon = filetime_to_datetime(attrs.get("lastLogonTimestamp"))
+    return {
+        "IP": "N/A",
+        "Hostname": fqdn,
+        "OS": os_name.strip() or "Unknown",
+        "Ports": "N/A",
+        "Source": "AD",
+        "OU": ou_path(dn),
+        "Enabled": not uac & UAC_ACCOUNTDISABLE,
+        "DomainController": bool(uac & UAC_SERVER_TRUST),
+        "LastLogon": last_logon.date().isoformat() if last_logon else "Never",
+        "Stale": last_logon is None or (now - last_logon).days > STALE_AFTER_DAYS,
+    }
+
+
+def _resolve(fqdn) -> str:
+    """Forward DNS lookup for an AD computer; "N/A" when the record is missing."""
+    try:
+        return socket.gethostbyname(fqdn)
+    except (OSError, UnicodeError):
+        return "N/A"
 
 
 class ADDiscovery:
-    def __init__(self, domain, username, password):
+    """Lists every computer object in a domain, with OS, OU, logon age and resolved IP."""
+
+    def __init__(self, domain, username, password, dc=None, use_ldaps=False):
+        """
+        :param domain: DNS domain, e.g. "corp.local" (also used to build the search base)
+        :param username: "user@corp.local" or "CORP\\user"
+        :param password: account password (never logged)
+        :param dc: domain controller host/IP when the domain name does not resolve to one
+        :param use_ldaps: bind over LDAPS (636) instead of StartTLS/NTLM on 389
+        """
         self.domain = domain
         self.username = username
         self.password = password
+        self.server_host = dc or domain
+        self.use_ldaps = use_ldaps
+        self.base_dn = ",".join(f"DC={part}" for part in domain.split("."))
+
+    def _ntlm_user(self) -> str:
+        """NTLM wants DOMAIN\\user; derive it from a UPN (user@corp.local) when needed."""
+        if "\\" in self.username:
+            return self.username
+        user, _, realm = self.username.partition("@")
+        return f"{realm or self.domain}\\{user}"
+
+    def _connect(self):
+        """Open an authenticated, never-cleartext connection; returns (connection, method)."""
+        from ldap3 import NTLM, SIMPLE, Connection, Server, Tls
+        from ldap3.core.exceptions import LDAPException
+
+        # ponytail: encrypts but skips DC certificate validation (internal CAs are rarely in the
+        # local trust store); add a --ca-file option if MITM on the LAN is in the threat model.
+        tls = Tls(validate=ssl.CERT_NONE)
+        options = {"receive_timeout": 30, "read_only": True}
+
+        if self.use_ldaps:
+            server = Server(self.server_host, port=636, use_ssl=True, tls=tls, connect_timeout=10)
+            conn = Connection(server, self.username, self.password, authentication=SIMPLE, **options)
+            if not conn.bind():
+                raise PermissionError(f"LDAPS bind failed: {conn.result.get('description')}")
+            return conn, "LDAPS"
+
+        server = Server(self.server_host, port=389, tls=tls, connect_timeout=10)
+        conn = Connection(server, self.username, self.password, authentication=SIMPLE, **options)
+        conn.open()  # raises LDAPSocketOpenError if the DC is unreachable
+        try:
+            tls_ok = conn.start_tls()
+        except LDAPException:
+            tls_ok = False  # DC has no certificate - fall through to NTLM
+        if tls_ok:
+            if not conn.bind():  # encrypted now; a failure here is a real credential error
+                raise PermissionError(f"LDAP bind failed: {conn.result.get('description')}")
+            return conn, "StartTLS"
+        conn.unbind()
+
+        conn = Connection(server, self._ntlm_user(), self.password, authentication=NTLM, **options)
+        if not conn.bind():
+            raise PermissionError(f"NTLM bind failed: {conn.result.get('description')} "
+                                  "(if the DC requires LDAP signing, retry with --ldaps)")
+        return conn, "NTLM"
 
     def run(self):
-        if not ad_available:
-            logging.error("[!] ldap3 not installed. Run: pip install ldap3")
-            return []
-
-        assets = []
+        """Return a list of computer assets; raises on connection or credential errors."""
+        conn, method = self._connect()
+        log.info(f"[+] Connected to {self.server_host} via {method} (password not sent in cleartext)")
         try:
-            server = Server(self.domain, get_info=ALL)
-            conn = Connection(server, user=self.username, password=self.password, auto_bind=True)
-            logging.info(f"[+] Connected to AD domain: {self.domain}")
-
-            conn.search(
-                search_base=f"DC={self.domain.replace('.', ',DC=')}",
-                search_filter="(objectClass=computer)",
-                attributes=["cn", "dNSHostName", "operatingSystem", "operatingSystemVersion"]
-            )
-
-            for entry in conn.entries:
-                fqdn = str(entry.dNSHostName) if entry.dNSHostName else str(entry.cn)
-                os_name = str(entry.operatingSystem) if entry.operatingSystem else "Unknown"
-                os_version = str(entry.operatingSystemVersion) if entry.operatingSystemVersion else ""
-
-                try:
-                    ip = socket.gethostbyname(fqdn)
-                except Exception:
-                    ip = "N/A"
-
-                asset = {
-                    "IP": ip,
-                    "Hostname": fqdn,
-                    "OS": f"{os_name} {os_version}".strip(),
-                    "Ports": "N/A"
-                }
-                logging.info(f"    [+] AD Computer: {asset['IP']} ({asset['Hostname']}) | OS: {asset['OS']}")
-                assets.append(asset)
-
+            results = conn.extend.standard.paged_search(
+                self.base_dn, "(objectClass=computer)", attributes=ATTRIBUTES, paged_size=500, generator=True)
+            assets = [computer_to_asset(r["dn"], r["attributes"]) for r in results
+                      if r.get("type") == "searchResEntry"]  # skip referrals to other domains
+        finally:
             conn.unbind()
-        except Exception as e:
-            logging.error(f"[!] Active Directory discovery failed: {e}")
 
+        # Resolve IPs in parallel; disabled accounts are skipped to save time.
+        enabled = [a for a in assets if a["Enabled"]]
+        with ThreadPoolExecutor(max_workers=64, thread_name_prefix="discovr-ad-dns") as pool:
+            for asset, ip in zip(enabled, pool.map(_resolve, [a["Hostname"] for a in enabled])):
+                asset["IP"] = ip
+
+        for asset in assets:
+            log.info(f"    [+] AD Computer: {asset['IP']} ({asset['Hostname']}) | OS: {asset['OS']}")
+        log.info(f"[+] {len(assets)} computer accounts ({len(enabled)} enabled)")
         return assets

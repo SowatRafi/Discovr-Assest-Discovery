@@ -1,4 +1,5 @@
 import argparse
+import getpass
 import sys
 import time
 import ipaddress
@@ -202,8 +203,12 @@ def main():
     # Active Directory
     parser.add_argument("--ad", action="store_true", help="Active Directory discovery")
     parser.add_argument("--domain", help="AD domain")
-    parser.add_argument("--username", help="AD username")
-    parser.add_argument("--password", help="AD password")
+    parser.add_argument("--username", help="AD username, e.g. user@corp.local or CORP\\user")
+    parser.add_argument("--password", help="AD password (omit to be prompted securely; "
+                                           "or set DISCOVR_AD_PASSWORD) - avoid: visible in shell history")
+    parser.add_argument("--dc", help="Domain controller host/IP (default: resolve the domain name)")
+    parser.add_argument("--ldaps", action="store_true",
+                        help="Bind over LDAPS/636 (default: StartTLS, falling back to NTLM)")
 
     # Passive
     parser.add_argument("--passive", action="store_true", help="Passive discovery")
@@ -258,11 +263,15 @@ def main():
 
             feature = "ad"
             log_file, timestamp = Logger.setup(feature)
-            if not (args.domain and args.username and args.password):
-                print("[!] AD discovery requires --domain, --username, --password")
+            if not (args.domain and args.username):
+                print("[!] AD discovery requires --domain and --username")
                 sys.exit(1)
+            # Prefer the environment or an interactive prompt: CLI arguments leak into
+            # shell history and are visible to other users in the process list.
+            password = args.password or os.environ.get("DISCOVR_AD_PASSWORD") \
+                or getpass.getpass(f"Password for {args.username}: ")
             print(f"[+] Discovering Active Directory assets in {args.domain}")
-            scanner = ADDiscovery(args.domain, args.username, args.password)
+            scanner = ADDiscovery(args.domain, args.username, password, dc=args.dc, use_ldaps=args.ldaps)
             assets = scanner.run()
             Reporter.print_results(assets, len(assets), "AD assets")
 
