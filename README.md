@@ -226,6 +226,7 @@ JSON reports can be re-imported into the dashboard.
 pip install --require-hashes -r requirements.lock
 pip install -r requirements-dev.txt
 python -m pytest -q                          # unit + integration tests (no network needed)
+python scripts/rebuild_macos_crypto.py       # Intel macOS: static OpenSSL; no-op elsewhere
 pyinstaller --noconfirm discovr.spec         # -> dist/discovr(.exe)
 python scripts/smoke_binary.py dist/discovr.exe  # use dist/discovr on macOS/Linux
 docker build -t discovr .                    # CLI in a container

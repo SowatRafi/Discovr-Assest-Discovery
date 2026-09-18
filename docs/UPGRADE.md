@@ -73,3 +73,10 @@ pip-audit -r requirements.lock --disable-pip --no-deps
 
 Runner architectures are selected explicitly using GitHub's
 [hosted runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+
+Intel macOS builds must run `python scripts/rebuild_macos_crypto.py` before PyInstaller.
+It rebuilds the hash-locked cryptography source with `OPENSSL_STATIC=1`, bypasses cached
+dynamic wheels and verifies the result with `otool`. This avoids a collision between
+Homebrew and Python's different `libssl.3.dylib` versions. Homebrew OpenSSL and Rust are
+build-time requirements on that platform; users still receive one executable.
+See cryptography's [static-build instructions](https://cryptography.io/en/latest/installation/).
