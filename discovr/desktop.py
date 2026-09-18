@@ -9,6 +9,30 @@ import sys
 import webbrowser
 
 
+def open_default_browser(url, new=2):
+    """Keep bundled libraries out of the system browser's process environment."""
+    if not getattr(sys, "frozen", False):
+        return webbrowser.open(url, new=new)
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.kernel32.SetDllDirectoryW(None)
+        try:
+            return webbrowser.open(url, new=new)
+        finally:
+            ctypes.windll.kernel32.SetDllDirectoryW(sys._MEIPASS)
+    if sys.platform.startswith("linux"):
+        previous = os.environ.pop("LD_LIBRARY_PATH", None)
+        if "LD_LIBRARY_PATH_ORIG" in os.environ:
+            os.environ["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH_ORIG"]
+        try:
+            return webbrowser.open(url, new=new)
+        finally:
+            os.environ.pop("LD_LIBRARY_PATH", None)
+            if previous is not None:
+                os.environ["LD_LIBRARY_PATH"] = previous
+    return webbrowser.open(url, new=new)
+
+
 def write_private_json(path, payload):
     """Create a private automation handoff without overwriting an existing file.
 
@@ -82,7 +106,7 @@ def main(argv=None):
                 args.licenses_file.write_bytes(Path(discovr.__file__).with_name("THIRD_PARTY_NOTICES.txt").read_bytes())
                 return 0
             from discovr.server import serve
-            serve(open_browser=not args.no_browser, on_ready=ready)
+            serve(open_browser=not args.no_browser, on_ready=ready, browser_opener=open_default_browser)
             return 0
         except Exception as exc:
             if not (args.startup_file or args.diagnostics_file or args.licenses_file):

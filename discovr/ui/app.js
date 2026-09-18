@@ -761,6 +761,9 @@ function wire() {
       await api("/api/shutdown", { method: "POST", body: {} });
       state.stopped = true;
       clearTimeout(pollTimer);
+      // Prevent keyboard and screen-reader users reaching controls after shutdown.
+      document.querySelector(".layout").inert = true;
+      document.querySelector(".topbar").inert = true;
       $("quit-gate").hidden = false;
       $("quit-gate").setAttribute("tabindex", "-1");
       $("quit-gate").focus();

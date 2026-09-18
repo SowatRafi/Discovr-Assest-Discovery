@@ -43,6 +43,7 @@ def main():
                 package.extractall(folder, filter="data")
             binary = folder / "Discovr/Discovr"
         environment = dict(os.environ, PATH="", PYTHONPATH="", PYTHONHOME="")
+        assert not any(path.is_symlink() for path in folder.rglob("*")), "USB archive requires symlink support"
         diagnostics = folder / "diagnostics.json"
         result = subprocess.run([str(binary), "--diagnostics-file", str(diagnostics)], cwd=folder, env=environment,
                                 text=True, capture_output=True, timeout=90)

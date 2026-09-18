@@ -1,10 +1,11 @@
-"""Archive a ready-to-run USB folder, retaining Unix permissions and macOS symlinks."""
+"""Archive USB apps with regular files so FAT/exFAT do not need symlink support."""
 import argparse
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 
 
 def main():
@@ -14,11 +15,15 @@ def main():
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     if sys.platform == "darwin":
-        app = Path("dist/Discovr.app").resolve()
-        # Finder's archiver preserves bundle symlinks and executable bits. Plain
-        # upload-artifact would lose permissions required for a double-click launch.
-        subprocess.run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent",
-                        str(app), str(output)], check=True)
+        with tempfile.TemporaryDirectory(prefix="discovr-usb-") as temporary:
+            app = Path(temporary) / "Discovr.app"
+            shutil.copytree("dist/Discovr.app", app, symlinks=False)
+            # Replacing symlinks changes bundle resources. Rebuild the ad-hoc seal;
+            # this is integrity signing, not a trusted Developer ID or notarisation.
+            subprocess.run(["/usr/bin/codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
+            subprocess.run(["/usr/bin/codesign", "--verify", "--deep", str(app)], check=True)
+            subprocess.run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent",
+                            str(app), str(output)], check=True)
     else:
         folder = Path("dist/Discovr").resolve()
         shutil.copy2("docs/USB-START.txt", folder / "START HERE.txt")
@@ -33,7 +38,7 @@ def main():
                                 f'Comment=Portable asset discovery\nExec=/bin/sh -c "{quoted}" discovr %k\n'
                                 'Terminal=false\nCategories=Utility;Network;\n', encoding="utf-8")
             launcher.chmod(0o755)
-            with tarfile.open(output, "w:gz") as archive:
+            with tarfile.open(output, "w:gz", dereference=True) as archive:
                 archive.add(folder, arcname="Discovr")
         else:
             shutil.make_archive(str(output.with_suffix("")), "zip", folder.parent, folder.name)

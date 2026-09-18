@@ -510,7 +510,7 @@ def create_server(port=0):
     return server, f"http://127.0.0.1:{actual}/#token={server.token}"
 
 
-def serve(port=0, open_browser=True, on_ready=None):
+def serve(port=0, open_browser=True, on_ready=None, browser_opener=None):
     """Run until Quit or Ctrl+C; on_ready supplies the launcher with the private URL."""
     server, url = create_server(port)
     app_log = logging.getLogger("discovr")
@@ -525,7 +525,7 @@ def serve(port=0, open_browser=True, on_ready=None):
     try:
         if on_ready:
             on_ready(url)
-        if open_browser and not webbrowser.open(url, new=2):
+        if open_browser and not (browser_opener or webbrowser.open)(url, new=2):
             raise OSError("No default browser could be opened. Set a default browser in your computer's settings.")
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:

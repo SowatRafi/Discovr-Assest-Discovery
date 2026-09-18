@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from discovr.desktop import main, write_private_json
+from discovr.desktop import main, open_default_browser, write_private_json
 
 
 def test_double_click_opens_browser_without_stdio(monkeypatch):
@@ -55,3 +55,20 @@ def test_browser_failure_releases_listener(monkeypatch):
     with pytest.raises(OSError, match="default browser"):
         server_module.serve()
     assert server.socket.fileno() == -1
+
+
+def test_browser_does_not_inherit_frozen_linux_libraries(monkeypatch):
+    import os
+    seen = []
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/usb/Discovr/_internal")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/system/libs")
+    def launch(*args, **kwargs):
+        seen.append(os.environ.get("LD_LIBRARY_PATH"))
+        raise OSError("Browser failed")
+    monkeypatch.setattr("discovr.desktop.webbrowser.open", launch)
+    with pytest.raises(OSError):
+        open_default_browser("http://127.0.0.1/")
+    assert seen == ["/system/libs"]
+    assert os.environ["LD_LIBRARY_PATH"] == "/usb/Discovr/_internal"
