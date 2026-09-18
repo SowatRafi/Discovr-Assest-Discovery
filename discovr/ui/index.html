@@ -56,11 +56,12 @@
     <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch to light theme">
       <svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg>
     </button>
+    <button class="btn ghost" id="quit-btn" type="button" title="Quit before unplugging your USB drive">Quit</button>
   </header>
 
   <div class="banner" id="offline-banner" role="alert" hidden>
     <svg class="icon" aria-hidden="true"><use href="#i-info"/></svg>
-    Lost connection to Discovr. Is it still running in its terminal window?
+    Lost connection to Discovr. Reopen the app from its icon if it has stopped.
   </div>
 
   <div class="layout">
@@ -120,23 +121,17 @@
               </div>
               <p class="hint" id="intensity-hint">512 probes in flight, 1 s timeout.</p>
             </fieldset>
-            <label class="check"><input type="checkbox" name="osDetect" id="f-os-detect">
-              <span>OS fingerprinting with nmap <small id="nmap-note"></small></span></label>
+            <p class="hint">Built-in scanning and OS hints. No extra software or administrator rights needed.</p>
           </fieldset>
 
           <fieldset class="fields" data-kind="passive" hidden>
             <legend class="sr-only">Passive listening options</legend>
-            <p class="hint">By default, watches the OS neighbour cache across local interfaces. No installation, admin rights or packets sent. Cached entries may be stale; silent devices may be missing.</p>
-            <label class="check"><input id="f-capture-packets" name="capturePackets" type="checkbox"><span>Use packet capture (requires capture rights and a driver)</span></label>
-            <div class="field">
-              <label for="f-iface">Interface</label>
-              <select id="f-iface" name="iface"></select>
-            </div>
+            <p class="hint">Watches the OS neighbour cache across local interfaces. No installation, admin rights or packets sent. Cached entries may be stale; silent devices may be missing.</p>
             <div class="field">
               <label for="f-duration">Listen for (seconds)</label>
               <input id="f-duration" name="duration" type="number" inputmode="numeric" min="10" max="3600" value="120">
             </div>
-            <p class="hint">Packet capture can learn hostnames and OS hints from ARP, DHCP, mDNS, NetBIOS, LLMNR and SSDP. Cache observation provides IP/MAC evidence only.</p>
+            <p class="hint">Provides IP/MAC evidence. Use Network, Active Directory or cloud discovery for more detail.</p>
           </fieldset>
 
           <fieldset class="fields" data-kind="ad" hidden>
@@ -182,7 +177,7 @@
               <input id="f-region" name="region" autocomplete="off" spellcheck="false" value="all" aria-describedby="h-region">
               <p class="hint" id="h-region">"all" scans every region enabled on the account.</p>
             </div>
-            <details><summary>Credentials for this scan (no AWS CLI needed)</summary>
+            <details open><summary>Credentials for this scan</summary>
               <div class="field"><label for="f-access-key">Access key ID</label><input id="f-access-key" name="accessKey" autocomplete="off"></div>
               <div class="field"><label for="f-secret-key">Secret access key</label><input id="f-secret-key" name="secretKey" type="password" autocomplete="off"></div>
               <div class="field"><label for="f-session-token">Session token (temporary credentials)</label><input id="f-session-token" name="sessionToken" type="password" autocomplete="off"></div>
@@ -197,13 +192,13 @@
               <label for="f-subscription">Subscription ID <small>(optional)</small></label>
               <input id="f-subscription" name="subscription" autocomplete="off" spellcheck="false" placeholder="All enabled subscriptions">
             </div>
-            <details><summary>Credentials for this scan (no Azure CLI needed)</summary>
+            <details open><summary>Credentials for this scan</summary>
               <div class="field"><label for="f-tenant-id">Tenant ID</label><input id="f-tenant-id" name="tenantId" autocomplete="off"></div>
               <div class="field"><label for="f-client-id">Application (client) ID</label><input id="f-client-id" name="clientId" autocomplete="off"></div>
               <div class="field"><label for="f-client-secret">Client secret</label><input id="f-client-secret" name="clientSecret" type="password" autocomplete="off"></div>
               <p class="hint">Use an application with Reader access. Credentials remain in memory for this scan only.</p>
             </details>
-            <p class="hint">Or use an existing <code>az login</code> session, managed identity or AZURE_* environment variables.</p>
+            <p class="hint">Existing credentials or managed identity can also be used.</p>
           </fieldset>
 
           <fieldset class="fields" data-kind="gcp" hidden>
@@ -220,7 +215,7 @@
               <label for="f-keyfile">Service-account key file <small>(optional)</small></label>
               <input id="f-keyfile" name="credentialsFile" autocomplete="off" spellcheck="false" placeholder="C:\keys\discovr.json">
             </div>
-            <p class="hint">Without a key file, uses <code>gcloud auth application-default login</code>.</p>
+            <p class="hint">Enter the path to your service-account JSON key, or use existing application credentials. No provider tools need installing.</p>
           </fieldset>
 
           <p class="callout" id="kind-warning" role="note" hidden></p>
@@ -339,9 +334,23 @@
 
   <section class="auth-gate" id="auth-gate" hidden>
     <svg class="icon brand-mark" aria-hidden="true"><use href="#i-logo"/></svg>
-    <h1>Open Discovr from its link</h1>
-    <p>For your security this page needs the private session link printed in the terminal
-      where Discovr is running (it looks like <code>http://127.0.0.1:PORT/#token=…</code>).</p>
+    <h1>Open Discovr from its app icon</h1>
+    <p>Double-click Discovr on your USB drive. It opens an authorised dashboard automatically.</p>
+  </section>
+
+  <dialog class="confirm" id="quit-confirm" aria-labelledby="quit-title">
+    <form method="dialog">
+      <h2 id="quit-title">Quit Discovr?</h2>
+      <p>Export any results you want to keep first. Quitting stops scans and clears this session.</p>
+      <div class="confirm-actions">
+        <button class="btn ghost" value="cancel" autofocus>Keep working</button>
+        <button class="btn danger-solid" value="ok">Quit Discovr</button>
+      </div>
+    </form>
+  </dialog>
+  <section class="auth-gate" id="quit-gate" hidden>
+    <h1>Discovr has stopped</h1>
+    <p>You can close this tab and eject your USB drive using your computer's eject option.</p>
   </section>
 
   <div class="toasts" id="toasts" role="status" aria-live="polite"></div>

@@ -1,4 +1,4 @@
-"""Validate a relocated executable with an empty PATH and no source-tree working directory.
+"""Validate the actual USB archive after relocation, with an empty PATH.
 
 Uses only the standard library. Run on each build platform before uploading a binary.
 The only active scan targets a TCP listener created by this test on loopback.
@@ -9,44 +9,83 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import socket
 import subprocess
+import struct
+import sys
+import tarfile
 import tempfile
 import time
+import zipfile
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("binary", type=Path)
+    parser.add_argument("archive", type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="discovr-smoke-") as temporary:
-        folder = Path(temporary)
-        binary = folder / args.binary.name
-        shutil.copy2(args.binary.resolve(), binary)
+        folder = Path(temporary) / "USB drive with spaces"
+        folder.mkdir()
+        archive = args.archive.resolve()
+        if sys.platform == "darwin":
+            subprocess.run(["/usr/bin/ditto", "-x", "-k", str(archive), str(folder)], check=True)
+            binary = folder / "Discovr.app/Contents/MacOS/Discovr"
+        elif os.name == "nt":
+            with zipfile.ZipFile(archive) as package:
+                package.extractall(folder)
+            binary = folder / "Discovr/Discovr.exe"
+            # Check the Windows PE subsystem: this must be a GUI app, not a console app.
+            data = binary.read_bytes()
+            pe = struct.unpack_from("<I", data, 0x3c)[0]
+            assert struct.unpack_from("<H", data, pe + 24 + 68)[0] == 2
+        else:
+            with tarfile.open(archive) as package:
+                package.extractall(folder, filter="data")
+            binary = folder / "Discovr/Discovr"
         environment = dict(os.environ, PATH="", PYTHONPATH="", PYTHONHOME="")
-        result = subprocess.run([str(binary), "--diagnostics"], cwd=folder, env=environment,
+        diagnostics = folder / "diagnostics.json"
+        result = subprocess.run([str(binary), "--diagnostics-file", str(diagnostics)], cwd=folder, env=environment,
                                 text=True, capture_output=True, timeout=90)
         assert result.returncode == 0, f"Packaged diagnostics failed:\n{result.stdout}\n{result.stderr}"
-        assert json.loads(result.stdout)["ok"], result.stdout
-        notices = subprocess.run([str(binary), "--licenses"], cwd=folder, env=environment,
+        assert json.loads(diagnostics.read_text())["ok"], diagnostics.read_text()
+        licence_file = folder / "notices.txt"
+        notices = subprocess.run([str(binary), "--licenses-file", str(licence_file)], cwd=folder, env=environment,
                                  capture_output=True, timeout=30)
-        assert notices.returncode == 0 and b"scapy" in notices.stdout.lower(), notices.stderr
+        assert notices.returncode == 0 and "boto3" in licence_file.read_text(encoding="utf-8").lower(), notices.stderr
+        handoff = folder / "startup.json"
+        environment.update(DISCOVR_TEST_STARTUP_FILE=str(handoff), DISCOVR_TEST_NO_BROWSER="1")
         with (folder / "server.log").open("w+", encoding="utf-8") as output:
-            process = subprocess.Popen([str(binary), "--no-browser"], cwd=folder, env=environment,
+            arguments = [str(binary)]  # exercise the same zero-argument path as a double click
+            detached_launcher = sys.platform.startswith("linux")
+            if sys.platform == "darwin":
+                # Exercise LaunchServices (Finder's app-bundle path), not only the inner binary.
+                arguments = ["/usr/bin/open", "-W", "-n", str(folder / "Discovr.app"), "--args",
+                             "--no-browser", "--startup-file", str(handoff)]
+            elif detached_launcher:
+                # GIO interprets the actual relocated desktop file, including its Exec quoting.
+                arguments = ["/usr/bin/gio", "launch", str(folder / "Discovr/Discovr.desktop")]
+            started = time.monotonic()
+            process = subprocess.Popen(arguments, cwd=folder, env=environment,
                                        stdout=output, stderr=subprocess.STDOUT)
             try:
                 deadline = time.monotonic() + 60
                 match = None
                 while time.monotonic() < deadline:
-                    output.seek(0)
-                    match = re.search(r"http://127\.0\.0\.1:(\d+)/#token=([\w-]+)", output.read())
+                    try:
+                        startup = json.loads(handoff.read_text())
+                        match = re.search(r"http://127\.0\.0\.1:(\d+)/#token=([\w-]+)", startup["url"])
+                    except (FileNotFoundError, json.JSONDecodeError):
+                        match = None
                     if match:
                         break
-                    if process.poll() is not None:
-                        raise AssertionError("Dashboard exited before startup")
+                    if process.poll() is not None and (not detached_launcher or process.returncode != 0):
+                        output.seek(0)
+                        raise AssertionError("Dashboard exited before startup: " + output.read())
                     time.sleep(0.1)
                 assert match, "Dashboard did not start"
+                elapsed = time.monotonic() - started
+                assert Path(startup["runtime"]).resolve().is_relative_to(folder.resolve()), "Runtime was extracted elsewhere"
+                print(f"Dashboard ready in {elapsed:.2f}s; runtime loaded directly from the USB folder")
                 port, token = int(match[1]), match[2]
 
                 def request(method, path, body=None, authenticated=True):
@@ -65,6 +104,7 @@ def main():
                 assert request("GET", "/api/state", authenticated=False)[0] == 401
                 status, info = request("GET", "/api/info")
                 assert status == 200 and all(json.loads(info)["providers"].values())
+                assert "nmap" not in json.loads(info) and "captureWarning" not in json.loads(info)
                 with socket.socket() as listener:
                     listener.bind(("127.0.0.1", 0))
                     listener.listen(8)
@@ -87,7 +127,11 @@ def main():
                 assert request("POST", "/api/assets/import", [{"Hostname": "offline-import", "OS": "Linux"}])[0] == 200
                 assert request("POST", "/api/shutdown", {})[0] == 202
                 assert process.wait(timeout=15) == 0
-                print("PASS: relocated binary, empty PATH, provider diagnostics, dashboard, authenticated API, scan, exports, import")
+                deadline = time.monotonic() + 15
+                while handoff.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                assert not handoff.exists(), "Private startup handoff was not cleaned up"
+                print("PASS: relocated USB archive, empty PATH, GUI, provider diagnostics, authenticated API, scan, exports, import, Quit")
             finally:
                 if process.poll() is None and os.name == "nt":
                     subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],

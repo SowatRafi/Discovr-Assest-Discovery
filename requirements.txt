@@ -12,9 +12,6 @@ tabulate>=0.9        # CLI result tables
 ldap3>=2.9.1
 pycryptodome>=3.19   # MD4 for NTLM binds (OpenSSL 3 dropped it) - avoids cleartext LDAP binds
 
-# --- Passive discovery (needs Npcap on Windows, libpcap on macOS/Linux) --------
-scapy>=2.5
-
 # --- Cloud discovery (credentials are always supplied at runtime) --------------
 # AWS: profile / SSO / env vars | Azure: `az login` / env | GCP: ADC or key file
 boto3>=1.34

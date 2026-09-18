@@ -5,9 +5,9 @@
     discovr --autoipaddr --intensity gentle   sweep the local subnet, gently
     discovr --ad --domain corp.local --username me@corp.local      (password is prompted)
     discovr --cloud aws|azure|gcp             cloud inventory with runtime credentials
-    discovr --passive --iface eth0            listen-only discovery
+    discovr --passive                        observe the OS neighbour cache
 
-Heavy optional modules (cloud SDKs, scapy, LDAP) are imported inside their branches so
+Heavy optional modules (cloud SDKs, LDAP) are imported inside their branches so
 startup stays fast for everything else.
 """
 import argparse
@@ -20,11 +20,10 @@ import time
 import warnings
 
 from discovr import __version__
-from discovr.core import Exporter, Logger, Reporter, is_elevated
+from discovr.core import Exporter, Logger, Reporter
 
 # Third-party libraries are chatty; Discovr prints its own concise progress instead.
 warnings.filterwarnings("ignore")
-logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 
 FORMATS = {"csv": ["csv"], "json": ["json"], "html": ["html"], "both": ["csv", "json"], "all": ["csv", "json", "html"]}
 SAVE_PROMPT_SECONDS = 15   # Windows interactive prompt: auto-save after this long
@@ -69,7 +68,6 @@ def build_parser() -> argparse.ArgumentParser:
     net.add_argument("--intensity", choices=["gentle", "normal", "aggressive"], default="normal",
                      help="load profile (default: normal); use gentle on sensitive networks")
     net.add_argument("--parallel", type=int, metavar="N", help="max probes in flight (overrides --intensity)")
-    net.add_argument("--os-detect", action="store_true", help="also fingerprint OS with nmap -O (needs nmap + admin/root)")
 
     cloud = parser.add_argument_group("cloud discovery (credentials resolved at runtime)")
     cloud.add_argument("--cloud", choices=["aws", "azure", "gcp"], help="cloud provider")
@@ -93,9 +91,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     passive = parser.add_argument_group("passive discovery (no packets sent)")
     passive.add_argument("--passive", action="store_true", help="observe the OS neighbour cache without a capture driver")
-    passive.add_argument("--packet-capture", action="store_true",
-                         help="use packet capture instead of the OS neighbour cache (needs capture rights/driver)")
-    passive.add_argument("--iface", help="packet-capture interface (asked interactively if omitted in capture mode)")
     passive.add_argument("--timeout", type=int, default=180, help="listening time in seconds (default: 180)")
 
     out = parser.add_argument_group("reports")
@@ -168,11 +163,9 @@ def run_scan(feature, args):
             except OSError as exc:
                 raise RuntimeError(f"Could not detect the local subnet (no network connection?): {exc}")
             print(f"[+] Auto-detected local subnet: {target}")
-        scanner = NetworkDiscovery(target, args.ports, args.parallel, args.intensity, args.os_detect)
+        scanner = NetworkDiscovery(target, args.ports, args.parallel, args.intensity)
         assets, scanned, elapsed = scanner.run(on_progress=print_progress)
         print(f"[+] Total execution time: {elapsed:.2f} seconds")
-        if args.os_detect and not is_elevated():
-            print("[!] nmap OS detection needs Administrator/root; OS names above are port-based guesses.")
         return assets, scanned, "active assets"
 
     if feature == "cloud":
@@ -205,8 +198,7 @@ def run_scan(feature, args):
     from discovr.passive import PassiveDiscovery
 
     print("[+] Running passive discovery")
-    assets, _ = PassiveDiscovery(iface=args.iface, timeout=args.timeout,
-                                 cache_only=not args.packet_capture).run(on_progress=print_progress)
+    assets, _ = PassiveDiscovery(timeout=args.timeout).run(on_progress=print_progress)
     return assets, len(assets), "passive assets"
 
 
@@ -238,8 +230,6 @@ def main(argv=None):
         parser.error("--port must be between 0 and 65535")
     if args.timeout <= 0:
         parser.error("--timeout must be a positive number of seconds")
-    if args.packet_capture and not args.passive:
-        parser.error("--packet-capture requires --passive")
     feature = selected_feature(args)
     if feature is None:
         # No scan options (or --ui): the local web interface - also what a double-click starts.

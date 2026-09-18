@@ -18,7 +18,6 @@ import logging
 import platform
 import re
 import secrets
-import shutil
 import socket
 import threading
 import time
@@ -82,6 +81,10 @@ def build_scanner(kind, params):
     for name in ("osDetect", "ldaps", "capturePackets"):
         if name in params and not isinstance(params[name], bool):
             raise BadRequest(f"{name} must be true or false", field=name)
+    # Reject obsolete clients explicitly; never start an external-tool mode silently.
+    for name in ("osDetect", "capturePackets"):
+        if params.get(name):
+            raise BadRequest("This portable app uses built-in discovery only", field=name)
     if kind == "network":
         from discovr.network import NetworkDiscovery, parse_port_spec, parse_targets
 
@@ -98,21 +101,18 @@ def build_scanner(kind, params):
         intensity = params.get("intensity") or "normal"
         if intensity not in ("gentle", "normal", "aggressive"):
             raise BadRequest("Choose gentle, normal or aggressive", field="intensity")
-        return (NetworkDiscovery(target, ports, None, intensity, bool(params.get("osDetect"))),
+        return (NetworkDiscovery(target, ports, None, intensity),
                 f"Network {target}")
     if kind == "passive":
         from discovr.passive import PassiveDiscovery
 
-        capture = params.get("capturePackets", False)
-        iface = _text(params, "iface", bool(capture), "Interface")
         try:
             seconds = int(params.get("duration") or 120)
         except (TypeError, ValueError):
             raise BadRequest("Duration must be a number of seconds", field="duration")
         if not 10 <= seconds <= 3600:
             raise BadRequest("Duration must be between 10 and 3600 seconds", field="duration")
-        label = f"Packet capture on {iface}" if capture else "OS neighbour cache"
-        return PassiveDiscovery(iface=iface, timeout=seconds, cache_only=not capture), f"{label} ({seconds}s)"
+        return PassiveDiscovery(timeout=seconds), f"OS neighbour cache ({seconds}s)"
     if kind == "ad":
         from discovr.active_directory import ADDiscovery
 
@@ -150,7 +150,6 @@ def build_scanner(kind, params):
 def host_info() -> dict:
     """What this machine can do - drives defaults and capability hints in the UI."""
     from discovr.network import local_subnet
-    from discovr.passive import capture_warning, list_interfaces
 
     try:
         subnet = local_subnet()
@@ -169,12 +168,9 @@ def host_info() -> dict:
         "hostname": socket.gethostname(),
         "os": f"{platform.system()} {platform.release()}",
         "elevated": is_elevated(),
-        "nmap": bool(shutil.which("nmap")),
         "subnet": subnet,
-        "interfaces": list_interfaces(),
-        "captureWarning": capture_warning(),
         "providers": {"aws": installed("boto3"), "azure": installed("azure.identity"),
-                      "gcp": installed("google.auth"), "ad": installed("ldap3"), "passive": installed("scapy")},
+                      "gcp": installed("google.auth"), "ad": installed("ldap3"), "passive": True},
     }
 
 
@@ -392,7 +388,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "Not found"})
             token = self.headers.get("X-Discovr-Token", "")
             if not hmac.compare_digest(token.encode(), self.server.token.encode()):
-                return self._send(401, {"error": "Missing or invalid session token - open the link shown in the terminal"})
+                return self._send(401, {"error": "Missing or invalid session token - reopen Discovr from its app icon"})
             self._route(method, url.path, parse_qs(url.query))
         except BadRequest as exc:
             self._send(400, {"error": str(exc), "field": exc.field})
@@ -514,8 +510,8 @@ def create_server(port=0):
     return server, f"http://127.0.0.1:{actual}/#token={server.token}"
 
 
-def serve(port=0, open_browser=True):
-    """Run the UI until Ctrl+C: prints the private URL and opens it in the default browser."""
+def serve(port=0, open_browser=True, on_ready=None):
+    """Run until Quit or Ctrl+C; on_ready supplies the launcher with the private URL."""
     server, url = create_server(port)
     app_log = logging.getLogger("discovr")
     app_log.setLevel(logging.INFO)
@@ -526,9 +522,11 @@ def serve(port=0, open_browser=True):
     print(f"\n  Discovr {__version__} is running at:\n\n    {url}\n", flush=True)
     print("  This link contains a private session token - do not share it.", flush=True)
     print("  Press Ctrl+C to stop.\n", flush=True)
-    if open_browser and not webbrowser.open(url, new=2):
-        print("  (Could not open a browser automatically - copy the link above.)")
     try:
+        if on_ready:
+            on_ready(url)
+        if open_browser and not webbrowser.open(url, new=2):
+            raise OSError("No default browser could be opened. Set a default browser in your computer's settings.")
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
         print("\n[+] Discovr stopped.")

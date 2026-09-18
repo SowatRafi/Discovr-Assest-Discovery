@@ -11,7 +11,6 @@ This engine needs none of those:
      address, so hosts whose firewall drops all TCP still show up (with their MAC).
   3. Probe live hosts on the extended port list, resolve names and grab SSH banners,
      then guess the OS from what the host exposes.
-  4. Optionally (os_detect=True) hand the live hosts to ONE batched `nmap -O` run.
 
 Intensity profiles bound concurrency and timeouts so sensitive networks can be
 scanned gently (brief: "configurable to avoid causing disruptions").
@@ -19,14 +18,13 @@ scanned gently (brief: "configurable to avoid causing disruptions").
 import asyncio
 import ipaddress
 import logging
+import os
 import re
-import shutil
 import socket
 import struct
 import subprocess
 import sys
 import time
-import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 from discovr.lookup import lookup_many
@@ -137,8 +135,15 @@ def read_arp_cache() -> dict:
     try:
         if sys.platform.startswith("linux"):
             return parse_arp_table(Path("/proc/net/arp").read_text())
-        args = ["arp", "-a"] if sys.platform == "win32" else ["arp", "-an"]
-        out = subprocess.run(args, capture_output=True, text=True, errors="replace", timeout=10)
+        if sys.platform == "win32":
+            system = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+            args = [str(system / "System32" / "arp.exe"), "-a"]
+        else:
+            args = ["/usr/sbin/arp", "-an"]
+        # A GUI launch must not flash a console each time the neighbour cache is read.
+        options = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+        out = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                             errors="replace", timeout=3, **options)
         return parse_arp_table(out.stdout)
     except (OSError, subprocess.SubprocessError):
         return {}
@@ -232,65 +237,18 @@ def guess_os(ports: set, banner: str = "") -> str:
     return "Unknown"
 
 
-# --------------------------------------------------------------------------- nmap (optional)
-
-def parse_nmap_xml(xml_text) -> dict:
-    """IP -> best OS match name from `nmap -oX` output."""
-    result = {}
-    for host in ET.fromstring(xml_text).iter("host"):
-        addr = host.find("address[@addrtype='ipv4']")
-        match = host.find("os/osmatch")
-        if addr is not None and match is not None:
-            result[addr.get("addr")] = match.get("name")
-    return result
-
-
-def nmap_os_detect(hosts, ports=TOP_PORTS, cancel=None, intensity="normal") -> dict:
-    """Run one batched `nmap -O` over live hosts (needs nmap on PATH and admin/root)."""
-    exe = shutil.which("nmap")
-    if not exe:
-        raise RuntimeError("nmap is not installed or not on PATH")
-    found = {}
-    for i in range(0, len(hosts), 256):  # chunk to stay under command-line length limits
-        if cancel is not None and cancel.is_set():
-            break
-        timing = {"gentle": "-T2", "normal": "-T3", "aggressive": "-T4"}[intensity]
-        cmd = [exe, "-O", "--osscan-guess", "-Pn", "-n", timing, "--max-os-tries", "1",
-               "-p", ",".join(map(str, ports)), "-oX", "-", *hosts[i:i + 256]]
-        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              text=True, errors="replace") as process:
-            deadline = time.monotonic() + 1800
-            while True:
-                if (cancel is not None and cancel.is_set()) or time.monotonic() >= deadline:
-                    process.kill()
-                    process.communicate()
-                    if cancel is not None and cancel.is_set():
-                        return found
-                    raise RuntimeError("nmap OS detection timed out")
-                try:
-                    stdout, stderr = process.communicate(timeout=0.2)
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
-            if process.returncode != 0 or "<nmaprun" not in stdout:
-                raise RuntimeError(stderr.strip().splitlines()[-1] if stderr.strip() else "nmap failed")
-            found.update(parse_nmap_xml(stdout))
-    return found
-
-
 # --------------------------------------------------------------------------- engine
 
 class NetworkDiscovery:
     """Discovers live hosts in one or more IPv4 ranges; see the module docstring for phases."""
 
-    def __init__(self, network_range, ports=None, parallel=None, intensity="normal", os_detect=False):
+    def __init__(self, network_range, ports=None, parallel=None, intensity="normal"):
         """Validate inputs up front so bad ranges or ports fail before any packet is sent.
 
         :param network_range: CIDR, IP, or comma-separated list of them
         :param ports: optional port spec ("22,80,8000-8100"); replaces the two built-in phases
         :param parallel: max probes in flight (overrides the intensity profile)
         :param intensity: "gentle" | "normal" | "aggressive"
-        :param os_detect: also run nmap OS fingerprinting on live hosts
         """
         if intensity not in INTENSITY:
             raise ValueError(f"intensity must be one of {', '.join(INTENSITY)}")
@@ -302,7 +260,6 @@ class NetworkDiscovery:
             if not 1 <= parallel <= 4096:
                 raise ValueError("parallel must be between 1 and 4096")
             self.concurrency = max(1, int(parallel))
-        self.os_detect = os_detect
 
     def run(self, on_progress=None, on_asset=None, cancel=None):
         """Scan and return (assets, hosts_scanned, elapsed_seconds).
@@ -385,23 +342,13 @@ class NetworkDiscovery:
         # Fingerprinting must obey a concurrency bound too, even for a full /16.
         await asyncio.gather(*(read_banners() for _ in range(min(32, self.concurrency))))
 
-        # Phase 4 (optional): nmap OS fingerprinting for everything that answered.
-        nmap_os = {}
-        if self.os_detect and live and not (cancel is not None and cancel.is_set()):
-            progress(0, 0, "Running nmap OS detection")
-            try:
-                nmap_os = await asyncio.to_thread(nmap_os_detect, live, self.ports or TOP_PORTS,
-                                                  cancel, self.intensity)
-            except (RuntimeError, OSError, subprocess.SubprocessError, ET.ParseError) as exc:
-                log.warning(f"[!] nmap OS detection skipped: {exc}")
-
         assets = []
         for ip in live:
             ports = open_ports[ip]
             asset = {
                 "IP": ip,
                 "Hostname": hostnames.get(ip, "Unknown"),
-                "OS": nmap_os.get(ip) or guess_os(ports, banners.get(ip, "")),
+                "OS": guess_os(ports, banners.get(ip, "")),
                 "Ports": ",".join(map(str, sorted(ports))) or "None",
                 "MAC": macs.get(ip, "N/A"),
                 "Source": "Network",

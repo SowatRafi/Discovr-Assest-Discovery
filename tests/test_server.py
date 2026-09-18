@@ -156,6 +156,8 @@ def test_missing_certificate_or_key_files_are_field_errors(ui):
     ("/api/scans", {"kind": "network", "target": "127.0.0.1", "intensity": "invalid"}),
     ("/api/scans", {"kind": "network", "target": {}, "osDetect": False}),
     ("/api/scans", {"kind": "network", "target": "127.0.0.1", "osDetect": "false"}),
+    ("/api/scans", {"kind": "network", "target": "127.0.0.1", "osDetect": True}),
+    ("/api/scans", {"kind": "passive", "capturePackets": True}),
     ("/api/assets/import", [{"IP": "10.0.0.1", "InternetExposed": "false"}]),
     ("/api/assets/import", [{"IP": "10.0.0.1"}, {"IP": {"bad": "value"}}]),
 ])

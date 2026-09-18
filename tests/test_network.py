@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from discovr.network import (NetworkDiscovery, guess_os, parse_arp_table, parse_nmap_xml,
+from discovr.network import (NetworkDiscovery, guess_os, parse_arp_table,
                              parse_port_spec, parse_targets)
 
 WINDOWS_ARP = """
@@ -23,9 +23,6 @@ LINUX_ARP = """IP address       HW type     Flags       HW address            Ma
 192.168.1.1      0x1         0x2         60:95:f8:79:61:20     *        eth0
 192.168.1.9      0x1         0x0         00:00:00:00:00:00     *        eth0
 """
-NMAP_XML = """<?xml version="1.0"?><nmaprun><host><address addr="10.0.0.5" addrtype="ipv4"/>
-<os><osmatch name="Microsoft Windows 11 21H2" accuracy="96"/></os></host>
-<host><address addr="10.0.0.6" addrtype="ipv4"/></host></nmaprun>"""
 
 
 def test_parse_targets_expands_and_validates():
@@ -61,9 +58,6 @@ def test_guess_os_from_ports_and_banners():
     assert guess_os({62078}) == "iOS (guessed)"
     assert guess_os(set()) == "Unknown"
 
-
-def test_parse_nmap_xml():
-    assert parse_nmap_xml(NMAP_XML) == {"10.0.0.5": "Microsoft Windows 11 21H2"}
 
 
 def test_scan_finds_listening_port_on_localhost():

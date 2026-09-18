@@ -2,7 +2,7 @@
 
 **Portable asset discovery for security-tool rollouts.** Build an inventory of machines that may need to be
 running your security agent - on the network, in Active Directory and in AWS, Azure and GCP -
-from one small binary with a local web dashboard. No installer, no agents, no internet
+from a USB-ready app with a local web dashboard. No installer, no agents, no internet
 connection needed for local discovery. Cloud discovery requires access to the provider's APIs.
 
 [![build](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml/badge.svg?branch=Rejuvinate-Discovr)](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml)
@@ -18,7 +18,7 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 
 ## Highlights
 
-- **One file, three operating systems** - standalone binaries for Windows x64, macOS (Apple
+- **USB-ready, three operating systems** - self-contained app folders for Windows x64, macOS (Apple
   silicon and Intel), and Linux x64. Python is bundled; users do not install it.
 - **Fast, unprivileged network sweep** - an asyncio TCP engine needs no nmap, admin rights or
   Npcap; an ARP-cache pass also finds firewalled hosts on the local segment. Gentle / normal /
@@ -36,32 +36,37 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 
 ## Quick start
 
-### Portable binary
+### USB app: no installer or commands
 
-1. Download the file for your system from the
-   [Releases](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases) page
-   (`discovr-windows-x64.exe`, `discovr-macos-arm64`, `discovr-macos-x64` or `discovr-linux-x64`), and check it
-   against `SHA256SUMS.txt`.
-2. Run it:
-   - **Windows** - double-click the `.exe` (or run it from PowerShell).
-   - **macOS / Linux** - `chmod +x discovr-*` then `./discovr-macos-arm64` (or `-linux-x64`).
-3. Your browser opens the dashboard. Keep the terminal window open; press **Ctrl+C** or close
-   it to stop Discovr.
+1. Download the matching **discovr-usb** archive from [Releases](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases).
+   Extract it once using your file manager and copy the **whole Discovr folder/app** to your USB drive.
+2. Plug in the drive and double-click **Discovr.exe** on Windows, **Discovr.app** on macOS,
+   or **Discovr** on Linux. Your existing default browser opens the dashboard automatically.
+3. Choose a discovery source and click **Start**. Export results you want to keep, then click
+   **Quit** before ejecting the USB drive. Closing a browser tab alone does not stop the app.
 
-The binaries are not code-signed yet: on Windows choose *More info → Run anyway* in
-SmartScreen; on macOS right-click → *Open* once, or run
-`xattr -d com.apple.quarantine ./discovr-macos-arm64`.
+| System | Download |
+| --- | --- |
+| Windows x64 | `discovr-usb-windows-x64.zip` |
+| Linux x64 | `discovr-usb-linux-x64.tar.gz` |
+| macOS Apple silicon | `discovr-usb-macos-arm64.zip` |
+| macOS Intel | `discovr-usb-macos-x64.zip` |
 
-The default network scan and passive neighbour-cache observation require no installer,
-Python, nmap, packet-capture driver or administrator rights. AD needs directory credentials;
-cloud needs authorised runtime credentials. Full packet capture and nmap OS detection are
-optional advanced modes with additional system requirements.
+Everything Discovr needs is bundled. No Python, nmap, packet-capture driver or provider CLI
+needs installing. Keep the runtime files next to the launcher. The app loads them directly
+from the drive, avoiding the previous single-file extraction step on every launch.
+Startup and scan duration still depend on USB speed, operating-system checks and the network.
 
-Builds run on Windows, Ubuntu 22.04, macOS 14 (Apple silicon), and macOS 15 (Intel).
-Use the matching architecture. Binaries unpack their bundled runtime into a temporary
-directory while running; that directory must be writable and allow execution.
+The apps are unsigned. Windows/macOS may require first-run approval through their normal
+security UI. Linux file managers may require **Properties → Permissions → Allow executing file**;
+the drive must allow application execution. Discovr cannot bypass a machine's security policy.
+No terminal commands are needed for normal use. Check downloads against `SHA256SUMS.txt`.
 
-### From source (Python 3.13)
+Builds run on Windows, Ubuntu 22.04, macOS 14 (Apple silicon) and macOS 15 (Intel).
+AD and cloud discovery need authorised credentials; enter them in the dashboard. Passive
+observation reads the OS neighbour cache and sends no packets. Raw packet capture is not included.
+
+### Developer setup from source (Python 3.13)
 
 ```bash
 git clone https://github.com/SowatRafi/Discovr-Assest-Discovery.git
@@ -75,9 +80,8 @@ python -m discovr --help             # command line
 
 ## Web dashboard
 
-Running Discovr without options starts the dashboard and opens it in your default browser.
-The terminal shows the address, e.g. `http://127.0.0.1:53817/#token=...` - the token part is a
-private per-launch key, so share neither the link nor screenshots of it.
+Double-clicking the app opens an authorised dashboard. Its per-launch access token stays
+private; do not share the browser session. No terminal window is needed on Windows or macOS.
 
 - **New scan** (left) - pick a source, fill in the few fields it needs and start. Several scans
   can run at once; each shows live progress, the number of assets found and a *Stop* button.
@@ -92,23 +96,22 @@ private per-launch key, so share neither the link nor screenshots of it.
 - **Export** - CSV, JSON (re-importable) or a self-contained HTML report of the *filtered* view.
   **Import JSON** merges reports from other runs, e.g. a headless scan from a jump box.
 
-`--port 8080` fixes the port and `--no-browser` skips opening a browser.
+Use **Quit** in the top bar to stop the application and all running scans.
 
-## Command line
+## Developer CLI (optional)
 
-Every scan is also available headless - handy for servers, SSH sessions and scripts.
+The source distribution also supports headless automation. This is separate from normal USB use.
+In the examples below, run `python -m discovr` in place of `discovr`.
 
 ```bash
 discovr --autoipaddr                                   # sweep the local subnet
 discovr --scan-network 10.10.0.0/22 --intensity gentle # sensitive network
 discovr --scan-network 10.0.0.5,10.0.1.0/24 --ports 22,3389,5985-5986
-discovr --scan-network 192.168.1.0/24 --os-detect      # + nmap -O (needs nmap and admin/root)
 discovr --ad --domain corp.local --username auditor@corp.local        # password is prompted
 discovr --cloud aws                                    # every enabled region
 discovr --cloud azure --subscription <id>              # omit --subscription to scan all
 discovr --cloud gcp --project my-project --gcp-credentials key.json
 discovr --passive --timeout 300                       # observe OS cache, no driver
-discovr --passive --packet-capture --iface eth0 --timeout 300  # full capture, optional
 discovr --scan-network 10.0.0.0/24 --save yes --format all --out ./reports
 ```
 
@@ -118,13 +121,12 @@ discovr --scan-network 10.0.0.0/24 --save yes --format all --out ./reports
 |---|---|
 | *(none)*, `--ui`, `--port`, `--no-browser` | Web dashboard |
 | `--scan-network RANGE`, `--autoipaddr` | Active network sweep of a CIDR / IP / list (up to a /16), or of the local subnet |
-| `--ports`, `--intensity`, `--parallel`, `--os-detect` | Port list, load profile, probes in flight, nmap OS fingerprinting |
+| `--ports`, `--intensity`, `--parallel` | Port list, load profile, probes in flight |
 | `--ad --domain --username [--dc] [--ldaps] [--ca-file]` | Active Directory computers (password: prompt, or `DISCOVR_AD_PASSWORD`) |
 | `--cloud aws [--profile] [--region all]` | EC2 instances |
 | `--cloud azure [--subscription]` | Azure virtual machines |
 | `--cloud gcp [--project] [--zone] [--gcp-credentials]` | Compute Engine instances |
 | `--passive [--timeout]` | Observe the OS neighbour cache without sending packets |
-| `--passive --packet-capture [--iface] [--timeout]` | Capture ARP/DHCP/mDNS traffic; needs capture support |
 | `--diagnostics` | Offline validation of bundled providers and UI files; prints JSON |
 | `--save yes/no`, `--format csv/json/html/both/all`, `--out DIR` | Reports (default: CSV + JSON in `Documents/discovr_reports`) |
 
@@ -142,7 +144,6 @@ incomplete cloud/directory coverage (partial reports are still saved), `130` int
    drops all TCP still appear, with their MAC address.
 3. **Fingerprint** live hosts on 44 common service ports while reverse DNS runs in parallel; SSH
    banners and exposed services give an OS guess (Windows, domain controller, Ubuntu, iOS, ...).
-4. **Optional `--os-detect`** hands the live hosts to a single batched `nmap -O` run.
 
 | Intensity | Probes in flight | Timeout | Use for |
 |---|---|---|---|
@@ -160,10 +161,6 @@ It sends nothing and needs no additional software or elevated rights. Records ar
 marked as cached evidence: entries may be stale, and this mode cannot see silent devices
 that the operating system has not learned about. It observes IPv4 neighbours.
 
-Enable **Use packet capture** or `--packet-capture` to listen for ARP, DHCP (hostname + vendor-class OS fingerprint), mDNS, NetBIOS,
-LLMNR and SSDP, which is how devices announce themselves. It needs packet-capture rights:
-Administrator plus [Npcap](https://npcap.com) on Windows, root on macOS/Linux.
-
 ### Active Directory
 
 Lists every computer account with OS, OU, last logon, enabled/stale state and domain-controller
@@ -177,8 +174,8 @@ enough.
 | Provider | Uses | Minimum permissions |
 |---|---|---|
 | AWS | Dashboard access key + secret + optional session token; existing profiles, environment variables or instance role | `ec2:DescribeRegions`, `ec2:DescribeInstances`, `ec2:DescribeSecurityGroups`, `ssm:DescribeInstanceInformation` |
-| Azure | Dashboard tenant/client ID + client secret; existing `az login`, AZURE_* environment variables or managed identity | built-in **Reader** role on the subscription(s) |
-| GCP | `gcloud auth application-default login`, `GOOGLE_APPLICATION_CREDENTIALS`, `--gcp-credentials key.json` | **Compute Viewer** (`roles/compute.viewer`) |
+| Azure | Dashboard tenant/client ID + client secret; existing credentials or managed identity | built-in **Reader** role on the subscription(s) |
+| GCP | Dashboard service-account key-file path; existing application credentials | **Compute Viewer** (`roles/compute.viewer`) |
 
 Discovr lists virtual machines across all regions / subscriptions / zones and joins their
 security groups, NSGs or firewall rules. **Ports** shows what the firewall allows,
@@ -216,8 +213,9 @@ Keep inventories from unrelated on-premises networks separate when their address
 
 ## Reports
 
-`CSV`, `JSON` and `HTML` land in `Documents/discovr_reports/{csv,json,html}` (or `--out DIR`);
-every run also writes a log to `.../logs`. Each field any source reported becomes a column.
+Use the dashboard Export menu to download CSV, JSON or HTML reports through your browser.
+The optional source CLI saves to `Documents/discovr_reports/{csv,json,html}` (or `--out DIR`)
+and writes a log to `.../logs`. Each field any source reported becomes a column.
 JSON reports can be re-imported into the dashboard.
 
 ## Building and development
@@ -227,14 +225,16 @@ pip install --require-hashes -r requirements.lock
 pip install -r requirements-dev.txt
 python -m pytest -q                          # unit + integration tests (no network needed)
 python scripts/rebuild_macos_crypto.py       # Intel macOS: static OpenSSL; no-op elsewhere
-pyinstaller --noconfirm discovr.spec         # -> dist/discovr(.exe)
-python scripts/smoke_binary.py dist/discovr.exe  # use dist/discovr on macOS/Linux
+pyinstaller --noconfirm discovr.spec         # -> dist/Discovr (macOS: dist/Discovr.app)
+python scripts/package_usb.py dist/discovr-usb-windows-x64.zip
+python scripts/smoke_usb.py dist/discovr-usb-windows-x64.zip
+# Use the matching archive name above for macOS/Linux.
 docker build -t discovr .                    # CLI in a container
 ```
 
 GitHub Actions (`.github/workflows/build.yml`) tests on Windows, macOS and Linux, audits
-the locked dependencies with `pip-audit`, and builds four binaries. Each executable is
-copied outside the repository and tested with an empty PATH: provider diagnostics, dashboard,
+the locked dependencies with `pip-audit`, and builds four USB archives. Each archive is
+extracted outside the repository to a path with spaces and tested with an empty PATH: provider diagnostics, dashboard,
 loopback scan, export/import and shutdown. A `v*` tag prepares a **draft** release with SHA-256
 checksums for maintainer review. No public release is published automatically.
 
@@ -242,8 +242,8 @@ See [upgrade notes](docs/UPGRADE.md) for design decisions, validation and remain
 
 ```
 discovr/
-  cli.py        command line (and UI launcher)      server.py  local web server + REST API
-  network.py    async TCP sweep engine              passive.py listen-only discovery
+  desktop.py    double-click launcher; cli.py developer CLI      server.py  local web server + REST API
+  network.py    async TCP sweep engine              passive.py neighbour-cache observation
   active_directory.py  LDAP                         aws.py / azure.py / gcp.py  cloud providers
   core.py       merge, export, reporting            tagger.py / risk.py  classification
   ui/           dashboard (HTML/CSS/JS, no build step)
@@ -257,6 +257,6 @@ the network owner first, and prefer `--intensity gentle` or passive mode on frag
 
 ## License
 
-[MIT](LICENSE). The portable binaries also bundle third-party open-source libraries (including
-Scapy, GPL-2.0, and ldap3, LGPL-3.0) under their own licences. Run `discovr --licenses`
-to read bundled notices and the upstream release/source links for the exact package versions.
+[MIT](LICENSE). Bundled third-party libraries retain their own licences, including ldap3
+under LGPL-3.0. The USB folder includes `THIRD_PARTY_NOTICES.txt` with exact package versions
+and upstream source links. In the Mac app, this file is in `Contents/Resources/discovr`.

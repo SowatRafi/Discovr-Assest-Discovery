@@ -135,7 +135,7 @@ def test_passive_default_needs_neither_interface_nor_capture_driver(monkeypatch)
     monkeypatch.setattr("discovr.network.read_arp_cache", lambda: {"10.0.0.7": "aa:bb:cc:dd:ee:ff"})
     scanner, _ = build_scanner("passive", {"duration": "10"})
     result, found = scanner.run(on_asset=lambda _: cancel.set(), cancel=cancel)
-    assert scanner.cache_only and found == 1 and result[0]["IP"] == "10.0.0.7"
+    assert found == 1 and result[0]["IP"] == "10.0.0.7"
     assert "may be stale" in result[0]["SeenVia"]
 
 

@@ -1,0 +1,27 @@
+DISCOVR - READY TO RUN FROM YOUR USB DRIVE
+
+Copy this WHOLE folder to your USB drive once. Keep its contents together.
+Windows: double-click Discovr.exe.
+Linux: double-click Discovr (choose Run if your file manager asks).
+macOS: use the matching Mac download and double-click Discovr.app.
+
+Your existing default browser opens the dashboard automatically.
+No Python, nmap, capture driver, provider CLI, installer or command is required.
+Choose a discovery source, enter its details, and click Start.
+AD and cloud sources need your own authorised credentials.
+
+Export any results you want to keep. Click Quit in the dashboard before ejecting
+the USB drive. Closing a browser tab alone does not stop the application.
+
+The bundled runtime loads directly from this folder; it is not unpacked on every
+launch. Startup and scans still take time according to USB speed and the network.
+
+These builds are unsigned. Your operating system may ask for approval on first
+use. Linux must allow running applications from the USB drive. If needed, use
+the file manager's Properties / Permissions / Allow executing file option.
+A drive mounted with execution disabled needs an administrator policy change.
+Discovr cannot bypass those operating-system restrictions.
+
+Passive observation reads existing neighbour-cache entries. They may be stale,
+and devices missing from the cache will not appear. Network OS names are hints,
+not exact operating-system verification. No raw packet capture is included.

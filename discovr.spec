@@ -1,11 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller recipe for the portable, single-file Discovr binary.
+"""PyInstaller recipe for the ready-to-run USB folder and macOS app bundle.
 
 Build:   pip install -r requirements-dev.txt
-         pyinstaller --noconfirm discovr.spec      ->  dist/discovr  (dist\\discovr.exe on Windows)
+         pyinstaller --noconfirm discovr.spec      ->  dist/Discovr (macOS: dist/Discovr.app)
 
 Notes
-- Lazy imports inside functions (cloud SDKs, scapy) are still traced by PyInstaller.
+- Lazy imports inside functions (cloud SDKs) are still traced by PyInstaller.
 - botocore ships API models for ~400 AWS services; Discovr only calls EC2, STS and SSM
   (plus SSO for `aws sso login` profiles), so the rest are dropped - this is the single
   biggest size (and therefore start-up) saving in the bundle.
@@ -14,6 +14,7 @@ Notes
 """
 import re
 import runpy
+import sys
 from pathlib import Path
 
 notices = runpy.run_path(str(Path(SPECPATH) / "scripts" / "build_notices.py"))["collect_notices"](SPECPATH)
@@ -28,7 +29,7 @@ def keep(dest):
 
 
 a = Analysis(
-    ["discovr/__main__.py"],
+    ["discovr/desktop.py"],
     pathex=[],
     binaries=[],
     datas=[("discovr/ui", "discovr/ui"), (str(notices), "discovr")],
@@ -36,9 +37,8 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # Reached only via scapy's optional ticketer (tkinter), a delayed scapy test helper
-    # (unittest) and help() (pydoc) - none are used by Discovr, and Tk alone is several MB.
-    excludes=["tkinter", "unittest", "pydoc"],
+    # Raw packet capture is intentionally absent from the install-free USB product.
+    excludes=["tkinter", "unittest", "pydoc", "scapy"],
     noarchive=False,
     optimize=1,
 )
@@ -48,19 +48,26 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
-    name="discovr",
+    exclude_binaries=True,
+    name="Discovr",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
     runtime_tmpdir=None,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
 )
+
+# Loading libraries in place avoids one-file extraction on every USB launch.
+folder = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="Discovr")
+if sys.platform == "darwin":
+    app = BUNDLE(folder, name="Discovr.app", bundle_identifier="org.discovr.desktop",
+                 info_plist={"CFBundleName": "Discovr", "CFBundleShortVersionString": "2.1.0",
+                             "CFBundleVersion": "2.1.0", "LSUIElement": True,
+                             "NSHighResolutionCapable": True})

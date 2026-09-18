@@ -139,6 +139,7 @@ const state = {
   limit: PAGE,
   detailId: null,
   unauthorized: false,
+  stopped: false,
 };
 
 // ------------------------------------------------------------------ toasts
@@ -173,17 +174,9 @@ async function loadInfo() {
   const fact = (text, level) => el("li", { className: "fact" }, el("span", { className: `dot ${level || ""}` }), text);
   $("host-facts").replaceChildren(
     fact(info.hostname), fact(info.os),
-    fact(info.elevated ? "Administrator" : "Standard user", info.elevated ? "ok" : "warn"),
-    fact(info.nmap ? "nmap available" : "nmap not found", info.nmap ? "ok" : ""),
+    fact("Ready · no installation needed", "ok"),
   );
   if (!$("f-target").value && info.subnet) $("f-target").value = info.subnet;
-
-  const ifaces = info.interfaces || [];
-  $("f-iface").replaceChildren(...ifaces.map((i) => el("option", { value: i.name }, `${i.name} (${i.address})`)));
-
-  const osDetect = $("f-os-detect");
-  osDetect.disabled = !info.nmap;
-  $("nmap-note").textContent = !info.nmap ? "- nmap not found on PATH" : info.elevated ? "" : "- needs Administrator/root";
 
   for (const [kind, installed] of Object.entries(info.providers || {})) {
     const radio = document.querySelector(`input[name="kind"][value="${kind}"]`);
@@ -202,14 +195,6 @@ function updateKind() {
     fs.disabled = !active;
   }
   $("start-label").textContent = `Start ${KINDS[kind].noun}`;
-  let warning = "";
-  const capture = $("f-capture-packets").checked;
-  $("f-iface").disabled = !capture;
-  if (kind === "passive" && capture && state.info?.captureWarning) warning = state.info.captureWarning;
-  if (kind === "passive" && capture && state.info && !(state.info.interfaces || []).length) warning = "No network interface with an IPv4 address was found.";
-  const box = $("kind-warning");
-  box.hidden = !warning;
-  box.replaceChildren(icon("i-info"), el("span", {}, warning));
   clearErrors();
 }
 
@@ -244,7 +229,7 @@ async function submitScan(event) {
   clearErrors();
   const form = $("scan-form");
   const data = Object.fromEntries(new FormData(form));
-  for (const name of ["osDetect", "ldaps", "capturePackets"]) data[name] = name in data;
+  data.ldaps = "ldaps" in data;
   if (data.portsMode !== "custom") delete data.ports;
   delete data.portsMode;
   if (data.kind === "ad" && !data.password) return showFieldError("password", "Password is required");
@@ -272,7 +257,7 @@ let pollTimer = null;
 
 function pollSoon(delay = 0) {
   clearTimeout(pollTimer);
-  if (!token || state.unauthorized) return;   // no session: nothing to poll
+  if (!token || state.unauthorized || state.stopped) return;
   pollTimer = setTimeout(poll, delay);
 }
 
@@ -715,7 +700,6 @@ function wire() {
   $("theme-toggle").addEventListener("click", () => applyTheme(currentTheme() === "dark" ? "light" : "dark", true));
 
   for (const radio of document.querySelectorAll('input[name="kind"]')) radio.addEventListener("change", updateKind);
-  $("f-capture-packets").addEventListener("change", updateKind);
   for (const radio of document.querySelectorAll('input[name="intensity"]')) {
     radio.addEventListener("change", () => { $("intensity-hint").textContent = INTENSITY_HINTS[radio.value]; });
   }
@@ -767,6 +751,21 @@ function wire() {
     if (!e.target.closest("#export-menu")) $("export-menu").open = false;
   });
   $("clear-btn").addEventListener("click", confirmClear);
+  $("quit-btn").addEventListener("click", () => {
+    $("quit-confirm").returnValue = "";
+    $("quit-confirm").showModal();
+  });
+  $("quit-confirm").addEventListener("close", async () => {
+    if ($("quit-confirm").returnValue !== "ok") return;
+    try {
+      await api("/api/shutdown", { method: "POST", body: {} });
+      state.stopped = true;
+      clearTimeout(pollTimer);
+      $("quit-gate").hidden = false;
+      $("quit-gate").setAttribute("tabindex", "-1");
+      $("quit-gate").focus();
+    } catch (error) { toast(error.message, "error"); }
+  });
   $("confirm").addEventListener("close", async () => {
     if ($("confirm").returnValue !== "ok") return;
     try {

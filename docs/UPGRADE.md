@@ -6,15 +6,16 @@ targets macOS on Intel and Apple silicon.
 
 ## Keep Python for this release
 
-The existing implementation already bundles Python and its libraries into a single file.
-A Go rewrite would replace working LDAP and cloud integrations without eliminating the
-operating-system privileges required by packet capture. Continue with the current codebase
-and validate the executable itself. Reconsider Go only if measured startup, memory use or
-deployment restrictions on temporary extraction justify the migration.
+The USB package bundles Python and its dependencies in a ready-to-run folder (a `.app`
+bundle on macOS). Double-click the launcher; no separately installed runtime is used.
+PyInstaller's [one-folder model](https://pyinstaller.org/en/stable/operating-mode.html)
+loads libraries directly from the drive, avoiding per-launch temporary extraction.
+A Go rewrite is not needed to meet the no-install requirement. Reconsider it only if
+measurements on target hardware justify replacing the working LDAP and cloud integrations.
 
-PyInstaller's [one-file model](https://pyinstaller.org/en/stable/operating-mode.html) extracts
-the runtime to a temporary directory. It requires no separately installed Python, but is
-not a static executable and cannot run where extraction/execution is prohibited.
+USB startup cannot be literally instantaneous: device speed and operating-system scanning
+still matter. First-run security approval and Linux USB execution permissions are controlled
+by the host. The application cannot bypass them. See [USB instructions](USB-START.txt).
 
 ## Behaviour changes
 
@@ -26,8 +27,9 @@ not a static executable and cannot run where extraction/execution is prohibited.
   occurs between requests; in-flight requests and authentication can delay completion.
 - DNS lookups have caller deadlines and a bounded daemon worker pool. Stalled system DNS
   cannot hold the application open. SSH banner concurrency is bounded too.
-- nmap respects scan intensity and can be terminated by Stop.
-- Passive discovery defaults to watching the OS neighbour cache. Packet capture is opt-in.
+- nmap, raw packet capture and Scapy are removed. Every exposed mode works without installing tools.
+- Passive discovery watches the OS neighbour cache. Windows uses its built-in ARP reader without flashing a console.
+- The dashboard Quit button stops the process before the USB drive is ejected.
 - AWS/Azure credentials can be supplied through the dashboard without installing provider CLIs.
 - Invalid API payloads fail before modifying inventory. API connections and scan history are bounded.
 - Runtime dependencies are pinned with hashes and audited. Platform builds exercise the packaged
@@ -37,16 +39,16 @@ not a static executable and cannot run where extraction/execution is prohibited.
 
 Automated tests use loopback listeners, provider API fixtures and an offline LDAP directory.
 They cover application logic, not access to a specific customer's network or tenancy.
-`--diagnostics` checks that provider libraries and required AWS service models are packaged;
-it makes no authenticated API calls and is not a credential or capture-driver test.
+Packaged diagnostics check that provider libraries and required AWS service models are packaged;
+they make no authenticated API calls and are not a credential test.
 
 Before declaring a signed general-availability release, perform these environment checks:
 
 1. Verify AD paging, internal CA trust and user permissions on a real test domain.
 2. Compare AWS/Azure/GCP VM counts with provider consoles, including denied regions or
    subscriptions, stopped VMs, multiple NICs and overlapping private addresses.
-3. Verify packet capture on machines with supported capture facilities if that optional mode
-   will be offered. Compare the driver-free cache mode with its explicitly narrower coverage.
+3. Verify double-click launch on the intended USB drives and OS security policies. Compare
+   cache observation with its explicitly narrower coverage; verify Quit releases the drive.
 4. Review release checksums, dependency notices and platform binaries; code-sign Windows and
    sign/notarise macOS builds using the owner's signing identities.
 
@@ -78,5 +80,5 @@ Intel macOS builds must run `python scripts/rebuild_macos_crypto.py` before PyIn
 It rebuilds the hash-locked cryptography source with `OPENSSL_STATIC=1`, bypasses cached
 dynamic wheels and verifies the result with `otool`. This avoids a collision between
 Homebrew and Python's different `libssl.3.dylib` versions. Homebrew OpenSSL and Rust are
-build-time requirements on that platform; users still receive one executable.
+build-time requirements on that platform; users still receive a self-contained app bundle.
 See cryptography's [static-build instructions](https://cryptography.io/en/latest/installation/).

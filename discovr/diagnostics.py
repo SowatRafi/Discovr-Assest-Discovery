@@ -38,8 +38,10 @@ def check_runtime():
         Tls()
 
     def passive():
-        from scapy.all import ARP, Ether
-        bytes(Ether() / ARP())  # construct locally; no sockets/capture/transmission
+        from discovr.network import parse_arp_table
+        from discovr.passive import PassiveDiscovery
+        assert isinstance(parse_arp_table(""), dict)
+        PassiveDiscovery(timeout=1)
 
     def ui():
         from discovr.server import STATIC, UI_DIR
