@@ -32,7 +32,9 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "unittest", "pydoc", "lib2to3", "pytest", "IPython", "matplotlib", "numpy", "pandas"],
+    # Reached only via scapy's optional ticketer (tkinter), a delayed scapy test helper
+    # (unittest) and help() (pydoc) - none are used by Discovr, and Tk alone is several MB.
+    excludes=["tkinter", "unittest", "pydoc"],
     noarchive=False,
     optimize=1,
 )

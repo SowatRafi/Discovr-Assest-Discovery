@@ -278,7 +278,6 @@ class NetworkDiscovery:
         """
         if intensity not in INTENSITY:
             raise ValueError(f"intensity must be one of {', '.join(INTENSITY)}")
-        self.network_range = network_range
         self.hosts = parse_targets(network_range)
         self.ports = parse_port_spec(ports) if ports else None
         self.intensity = intensity

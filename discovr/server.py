@@ -47,7 +47,6 @@ MAX_RUNNING = 4                  # concurrent scans per session
 EXPORTS = {"csv": (to_csv, "text/csv; charset=utf-8"),
            "json": (to_json, "application/json; charset=utf-8"),
            "html": (to_html, "text/html; charset=utf-8")}
-STREAMING_KINDS = {"network", "passive"}   # scanners that report progress and stream assets
 
 
 class BadRequest(ValueError):
@@ -216,7 +215,7 @@ class Session:
 
         self.note("info", f"Started {job['label']}")
         try:
-            if kind in STREAMING_KINDS:
+            if kind in ("network", "passive"):  # these report progress and stream assets live
                 result = scanner.run(on_progress=progress, on_asset=found, cancel=cancel)
             else:
                 result = scanner.run()
