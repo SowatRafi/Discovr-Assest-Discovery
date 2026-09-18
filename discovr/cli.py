@@ -23,10 +23,8 @@ if platform.system() == "Windows":
 
 from discovr.core import Logger, Exporter, Reporter
 from discovr.network import NetworkDiscovery
-from discovr.cloud import CloudDiscovery
-from discovr.active_directory import ADDiscovery
-from discovr.passive import PassiveDiscovery
-from discovr.gcp import GCPDiscovery
+# Cloud, AD and passive modules pull in heavy SDKs (boto3, azure, scapy); they are
+# imported inside their branches below so startup stays fast for everything else.
 
 
 def is_admin_windows():
@@ -38,19 +36,36 @@ def is_admin_windows():
 
 
 def detect_local_subnet():
-    """Detect local subnet using default gateway interface"""
+    """Detect the subnet of the interface carrying the default route (psutil based)."""
+    from discovr.network import local_subnet
+
     try:
-        import netifaces
-        gateways = netifaces.gateways()
-        default_iface = gateways["default"][netifaces.AF_INET][1]
-        addrs = netifaces.ifaddresses(default_iface)[netifaces.AF_INET][0]
-        ip = addrs["addr"]
-        netmask = addrs["netmask"]
-        network = ipaddress.IPv4Network(f"{ip}/{netmask}", strict=False)
-        return str(network)
-    except Exception as e:
-        print(f"[!] Failed to auto-detect local subnet: {e}")
+        return local_subnet()
+    except OSError as e:
+        print(f"[!] Failed to auto-detect local subnet (no network connection?): {e}")
         sys.exit(1)
+
+
+def print_progress(done, total, stage):
+    """Self-updating progress line on stderr (keeps stdout clean for piping).
+
+    Counted stages redraw one line and finish it with a newline at 100%; stages without
+    a count (total == 0) print once. Later log lines therefore always start on a fresh line.
+    """
+    if total:
+        end = "\n" if done >= total else ""
+        sys.stderr.write(f"\r[~] {stage}: {done}/{total} ({done * 100 // total}%){end}")
+    else:
+        sys.stderr.write(f"[~] {stage}...\n")
+    sys.stderr.flush()
+
+
+def run_network_scan(target, args):
+    """Run the async network engine with CLI options; returns (assets, hosts_scanned)."""
+    scanner = NetworkDiscovery(target, args.ports, args.parallel, args.intensity, args.os_detect)
+    assets, total_hosts, elapsed = scanner.run(on_progress=print_progress)
+    print(f"[+] Total execution time: {elapsed:.2f} seconds")
+    return assets, total_hosts
 
 
 def show_privilege_hint(system, assets):
@@ -170,8 +185,12 @@ def main():
 
     # Network
     parser.add_argument("--scan-network", help="Network range (CIDR)")
-    parser.add_argument("--ports", help="Ports to scan (22,80,443)")
-    parser.add_argument("--parallel", type=int, default=1, help="Parallel workers")
+    parser.add_argument("--ports", help="Only scan these ports, e.g. 22,80,443 or 8000-8100")
+    parser.add_argument("--parallel", type=int, help="Max probes in flight (overrides --intensity)")
+    parser.add_argument("--intensity", choices=["gentle", "normal", "aggressive"], default="normal",
+                        help="Scan speed/load profile (default: normal); use gentle on sensitive networks")
+    parser.add_argument("--os-detect", action="store_true",
+                        help="Also fingerprint OS with nmap -O (needs nmap + admin/root)")
     parser.add_argument("--autoipaddr", action="store_true", help="Auto-detect subnet")
 
     # Cloud
@@ -205,22 +224,18 @@ def main():
             log_file, timestamp = Logger.setup(feature)
             network = detect_local_subnet()
             print(f"[+] Auto-detected local subnet: {network}")
-            start = time.time()
-            scanner = NetworkDiscovery(network, args.ports, args.parallel)
-            assets, total_hosts, _ = scanner.run()
-            print(f"[+] Total execution time: {time.time() - start:.2f} seconds")
+            assets, total_hosts = run_network_scan(network, args)
             Reporter.print_results(assets, total_hosts, "active assets")
 
         elif args.scan_network:
             feature = "network"
             log_file, timestamp = Logger.setup(feature)
-            start = time.time()
-            scanner = NetworkDiscovery(args.scan_network, args.ports, args.parallel)
-            assets, total_hosts, _ = scanner.run()
-            print(f"[+] Total execution time: {time.time() - start:.2f} seconds")
+            assets, total_hosts = run_network_scan(args.scan_network, args)
             Reporter.print_results(assets, total_hosts, "active assets")
 
         elif args.cloud:
+            from discovr.cloud import CloudDiscovery
+
             feature = "cloud"
             log_file, timestamp = Logger.setup(feature)
             if args.cloud == "azure":
@@ -239,6 +254,8 @@ def main():
             Reporter.print_results(assets, len(assets), "cloud assets")
 
         elif args.ad:
+            from discovr.active_directory import ADDiscovery
+
             feature = "ad"
             log_file, timestamp = Logger.setup(feature)
             if not (args.domain and args.username and args.password):
@@ -250,6 +267,8 @@ def main():
             Reporter.print_results(assets, len(assets), "AD assets")
 
         elif args.passive:
+            from discovr.passive import PassiveDiscovery
+
             feature = "passive"
             log_file, timestamp = Logger.setup(feature)
             print("[+] Running passive discovery")
