@@ -277,7 +277,7 @@ def main():
             log_file, timestamp = Logger.setup(feature)
             print("[+] Running passive discovery")
             scanner = PassiveDiscovery(iface=args.iface, timeout=args.timeout)
-            assets, total_assets = scanner.run()
+            assets, total_assets = scanner.run(on_progress=print_progress)
             Reporter.print_results(assets, len(assets), "passive assets")
 
         else:

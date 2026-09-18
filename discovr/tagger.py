@@ -78,7 +78,7 @@ class Tagger:
             return "[Workstation]"
 
         # Devices that cannot run agents - identified mostly by the services they expose.
-        if ports & PRINTER_PORTS or "printer" in host:
+        if ports & PRINTER_PORTS or "printer" in host or "printer" in os_name:
             return "[Printer]"
         if ports & IOT_PORTS or any(k in host for k in IOT_HOST_HINTS) or "embedded" in os_name:
             return "[IoT]"
