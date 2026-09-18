@@ -166,3 +166,14 @@ def test_job_count_uses_stable_inventory_identity_when_ip_is_learned(monkeypatch
     session = Session()
     job = wait_finished(session, session.start("ad", {}))
     assert job["found"] == len(session.inventory) == 1
+
+
+def test_repeated_passive_updates_preserve_network_service_evidence():
+    inventory, index = {}, {}
+    network = {"IP": "10.0.0.1", "Source": "Network", "Ports": "22,443"}
+    passive = {"IP": "10.0.0.1", "Source": "Passive", "Ports": "N/A"}
+    for asset in (network, passive, passive):
+        merge_assets(inventory, [asset], index=index)
+    assert next(iter(inventory.values()))["Ports"] == "22,443"
+    merge_assets(inventory, [{**network, "Ports": "22"}], index=index)
+    assert next(iter(inventory.values()))["Ports"] == "22"

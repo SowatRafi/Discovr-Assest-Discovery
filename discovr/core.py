@@ -203,7 +203,11 @@ def merge_assets(inventory: dict, assets, source=None, index=None, keys=None) ->
             if field in DERIVED_FIELDS:
                 continue
             if field == "Ports":
-                current["Ports"] = (_merge_tokens(None, value) if same_source
+                # Directory/cache updates carry no service evidence. They must not
+                # erase ports learned by a network scan after the sources have merged.
+                refresh_ports = same_source and (incoming.get("Source") == current.get("Source")
+                                                  or incoming.get("Source") == "Network" or incoming.get("Cloud"))
+                current["Ports"] = (_merge_tokens(None, value) if refresh_ports
                                     else _merge_tokens(current.get("Ports"), value))
             elif field == "Source":
                 current["Source"] = _merge_tokens(current.get("Source"), value).replace(",", ", ")
