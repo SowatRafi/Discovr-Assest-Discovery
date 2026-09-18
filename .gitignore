@@ -44,7 +44,17 @@ env.bak/
 # -----------------------------
 build/
 dist/
+# Ignore throwaway PyInstaller specs, but keep the maintained build recipe.
 *.spec
+!discovr.spec
+
+# Test caches
+.pytest_cache/
+
+# Local agent/tooling state (never part of the product)
+.claude-flow/
+.swarm/
+.claude/settings.local.json
 
 # Logs & Reports
 /logs

@@ -1,0 +1,4 @@
+# Development, test and build tooling - never shipped inside the binary.
+-r requirements.txt
+pytest>=8
+pyinstaller>=6.6
