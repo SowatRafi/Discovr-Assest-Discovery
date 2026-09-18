@@ -1,695 +1,218 @@
-# Discovr - Asset Discovery Tool
+# Discovr
 
-Discovr is a cross-platform asset discovery tool for **network, cloud, Active Directory, and passive sniffing environments**.  
-It actively scans networks, queries cloud APIs, enumerates Active Directory computers, and passively sniffs traffic.  
-Every discovered asset is enriched with **Tags** (Workstation, Server, IoT, Mobile, etc.) and a **Risk rating** (Critical, High, Medium, Low).  
-Results can be exported to CSV/JSON, with feature-specific logs saved per run.  
+**Portable asset discovery for security-tool rollouts.** Find every machine that should be
+running your security agent - on the network, in Active Directory and in AWS, Azure and GCP -
+from one small binary with a local web dashboard. No installer, no agents, no internet
+connection needed.
 
----
+[![build](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml/badge.svg?branch=Rejuvinate-Discovr)](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml)
 
-## 🔹 Arguments and Combinations
+![Discovr dashboard](docs/screenshot.png)
 
-| **Feature**                       | **Argument(s)**         | **Description**                                                                                                         | **Example**                                                                         |
-| --------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| 🌐 **Network Discovery**          | `--scan-network <CIDR>` | Scan a specific network range.                                                                                          | `--scan-network 192.168.1.0/24`                                                     |
-|                                   | `--ports <list>`        | Limit scan to specific ports (comma-separated).                                                                         | `--scan-network 192.168.1.0/24 --ports 22,80,443`                                   |
-|                                   | `--parallel <N>`        | Use parallel workers for faster scanning (default=1).                                                                   | `--scan-network 192.168.1.0/24 --parallel 10`                                       |
-|                                   | `--autoipaddr`          | Auto-detect local IP + subnet and scan it. Can combine with `--ports` or `--parallel`.                                  | `--autoipaddr --parallel 5`                                                         |
-| ☁️ **Cloud Discovery (AWS)**      | `--cloud aws`           | Select AWS as provider.                                                                                                 | `--cloud aws --profile default --region us-east-1`                                  |
-|                                   | `--profile <p>`         | AWS profile name (default=`default`).                                                                                   | `--cloud aws --profile myprofile --region us-west-2`                                |
-|                                   | `--region <r>`          | AWS region to scan (default=`us-east-1`).                                                                               | `--cloud aws --profile default --region eu-west-1`                                  |
-| ☁️ **Cloud Discovery (Azure)**    | `--cloud azure`         | Select Azure as provider.                                                                                               | `--cloud azure --subscription 12345678-abcd-1234-efgh-9876543210ab`                 |
-|                                   | `--subscription <id>`   | Azure subscription ID.                                                                                                  | `--cloud azure --subscription 12345678-abcd-1234`                                   |
-| ☁️ **Cloud Discovery (GCP)**      | `--cloud gcp`           | Select GCP as provider.                                                                                                 | `--cloud gcp --project my-gcp-project --zone us-central1-a`                         |
-|                                   | `--project <id>`        | GCP project ID.                                                                                                         | `--cloud gcp --project my-gcp-project --zone us-central1-a`                         |
-|                                   | `--zone <zone>`         | GCP zone in the project.                                                                                                | `--cloud gcp --project my-gcp-project --zone europe-west1-b`                        |
-| 🏢 **Active Directory Discovery** | `--ad`                  | Run AD discovery.                                                                                                       | `--ad --domain mydomain.local --username admin@mydomain.local --password Secret123` |
-|                                   | `--domain <d>`          | AD domain name.                                                                                                         | `--domain mydomain.local`                                                           |
-|                                   | `--username <u>`        | AD username.                                                                                                            | `--username admin@mydomain.local`                                                   |
-|                                   | `--password <p>`        | AD password.                                                                                                            | `--password Secret123`                                                              |
-| 📡 **Passive Discovery**          | `--passive`             | Run passive discovery (sniff ARP, DNS, DHCP, mDNS).                                                                     | `--passive`                                                                         |
-|                                   | `--iface <iface>`       | Specify network interface (interactive if not provided).                                                                | `--passive --iface "Wi-Fi"`                                                         |
-|                                   | `--timeout <s>`         | Passive discovery timeout in seconds (default=180).                                                                     | `--passive --iface "Wi-Fi" --timeout 60`                                            |
-| 📊 **Export System**              | *(Prompt after run)*    | Save results to CSV, JSON, or both. Filenames include feature + timestamp.                                              | `Choose format (csv/json/both): both`                                               |
-| 🏷️ **Tagger**                    | *(Automatic)*           | Classifies assets: `[Workstation]`, `[Server]`, `[Mobile]`, `[Tablet]`, `[IoT]`, `[Printer]`, `[Network]`, `[WebHost]`. | Auto-tag applied after scan.                                                        |
-| 🔐 **RiskAssessor**               | *(Automatic)*           | Assigns risk level (`Critical`, `High`, `Medium`, `Low`) based on OS, ports, and tags.                                  | Win7 + RDP → Critical; IoT + HTTP → High.                                           |
+## Why Discovr
 
+When an organisation deploys EDR or any other security agent, it rarely knows its whole
+estate, so agents land on a subset of machines and the rest stay invisible. Discovr answers
+one question quickly, in an unfamiliar environment, with minimal setup:
+**which hosts exist, which of them can run an agent, and which need attention first?**
 
----
+## Highlights
 
-## 🔹 Example Runs and Outputs
+- **One file, three operating systems** - a ~24 MB single binary for Windows, macOS (Apple
+  silicon) and Linux that starts in under a second and runs from a USB stick.
+- **Fast, unprivileged network sweep** - an asyncio TCP engine needs no nmap, admin rights or
+  Npcap; an ARP-cache pass also finds firewalled hosts on the local segment. Gentle / normal /
+  aggressive profiles protect sensitive networks.
+- **Every source, one inventory** - active network, passive listening, Active Directory, AWS,
+  Azure and GCP. Records merge per machine, so AD's exact OS joins the scan's open ports.
+- **Answers the rollout question** - every asset gets a type (Workstation, Server, Printer,
+  IoT, ...), an **Agent-capable** flag and a triage **risk** rating. Cloud VMs show whether the
+  AWS SSM or Azure VM agent is reporting, i.e. whether an agent can be pushed remotely.
+- **Local web dashboard** - filters, search, detail view, CSV / JSON / HTML export and JSON
+  import. Works fully offline.
+- **Secure by default** - the UI listens on 127.0.0.1 only, behind a per-launch token; AD
+  passwords never cross the network in cleartext; cloud credentials come only from each
+  provider's own login; reports neutralise CSV and HTML injection. See [SECURITY.md](SECURITY.md).
 
-🌐 Network Discovery — Example Runs and Outputs
+## Quick start
 
-This section documents **all possible argument combinations** for Network Discovery, with **real run simulated outputs** and **test run outputs**.  
+### Portable binary
 
----
+1. Download the file for your system from the
+   [Releases](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases) page
+   (`discovr-windows-x64.exe`, `discovr-macos-arm64` or `discovr-linux-x64`), and check it
+   against `SHA256SUMS.txt`.
+2. Run it:
+   - **Windows** - double-click the `.exe` (or run it from PowerShell).
+   - **macOS / Linux** - `chmod +x discovr-*` then `./discovr-macos-arm64` (or `-linux-x64`).
+3. Your browser opens the dashboard. Keep the terminal window open; press **Ctrl+C** or close
+   it to stop Discovr.
 
-### 1. Basic Run (`--scan-network`)
+The binaries are not code-signed yet: on Windows choose *More info → Run anyway* in
+SmartScreen; on macOS right-click → *Open* once, or run
+`xattr -d com.apple.quarantine ./discovr-macos-arm64`.
+
+### From source (Python 3.11+)
+
 ```bash
-python -m discovr.cli --scan-network 192.168.1.0/24
-```
-Output:
-```text
-[+] Logs saved at logs\discovr_network_log_20250906_130000.log
-[+] Scanning network: 192.168.1.0/24 with 1 parallel workers
-[+] Running OS detection scan (requires admin privileges)
-    [+] Found: 192.168.1.1 (router) | OS: Linux/Unix | Ports: 80,443
-    [+] Found: 192.168.1.10 (laptop01) | OS: Windows 10 Pro | Ports: 135,445
-    [+] Found: 192.168.1.20 (server01) | OS: Linux 5.x kernel | Ports: 22,80,443
-    [+] Found: 192.168.1.30 (printer01) | OS: Unknown | Ports: 9100
-
-Discovered Assets (final report):
-+---------------+-----------+-------------------+-----------+--------------+--------+
-| IP            | Hostname  | OS                | Ports     | Tag          | Risk   |
-+---------------+-----------+-------------------+-----------+--------------+--------+
-| 192.168.1.1   | router    | Linux/Unix        | 80,443    | [Network]    | Medium |
-| 192.168.1.10  | laptop01  | Windows 10 Pro    | 135,445   | [Workstation]| Medium |
-| 192.168.1.20  | server01  | Linux 5.x kernel  | 22,80,443 | [Server]     | Medium |
-| 192.168.1.30  | printer01 | Unknown           | 9100      | [Printer]    | High   |
-+---------------+-----------+-------------------+-----------+--------------+--------+
-
-[+] 4 active assets discovered out of 256 scanned hosts.
-[+] Total execution time: 23.12 seconds
-[+] Logs saved at logs/discovr_network_log_20250906_130000.log
-
-Do you want to save results? (yes/no): yes
-Choose format (csv/json/both): both
-[+] CSV saved: csv_report\discovr_network_20250906_130000.csv
-[+] JSON saved: json_report\discovr_network_20250906_130000.json
-```
-
----
-
-### 2. Run with Ports (`--scan-network + --ports`)
-```bash
-python -m discovr.cli --scan-network 192.168.1.0/24 --ports 22,80,443
-```
-Output:
-```text
-[+] Logs saved at logs\discovr_network_log_20250906_130030.log
-[+] Scanning network: 192.168.1.0/24 with 1 parallel workers
-[+] Running port-specific scan (ports: 22,80,443)
-    [+] Found: 192.168.1.1 (router) | OS: Linux/Unix | Ports: 80,443
-    [+] Found: 192.168.1.20 (server01) | OS: Linux 5.x kernel | Ports: 22,80
-    [+] Found: 192.168.1.50 (iot-device) | OS: Unknown | Ports: 443
-
-Discovered Assets (final report):
-+---------------+-----------+-------------------+-----------+--------------+--------+
-| IP            | Hostname  | OS                | Ports     | Tag          | Risk   |
-+---------------+-----------+-------------------+-----------+--------------+--------+
-| 192.168.1.1   | router    | Linux/Unix        | 80,443    | [Network]    | Medium |
-| 192.168.1.20  | server01  | Linux 5.x kernel  | 22,80     | [Server]     | Medium |
-| 192.168.1.50  | iot-device| Unknown           | 443       | [IoT]        | High   |
-+---------------+-----------+-------------------+-----------+--------------+--------+
-
-[+] 3 active assets discovered out of 256 scanned hosts.
-[+] Total execution time: 18.54 seconds
-```
-
----
-
-### 3. Run with Parallel (`--scan-network + --parallel`)
-```bash
-python -m discovr.cli --scan-network 192.168.1.0/24 --parallel 10
-```
-Output:
-```text
-[+] Logs saved at logs\discovr_network_log_20250906_130100.log
-[+] Scanning network: 192.168.1.0/24 with 10 parallel workers
-[+] Running OS detection scan (requires admin privileges)
-    [+] Found: 192.168.1.1 (router) | OS: Linux/Unix | Ports: 80,443
-    [+] Found: 192.168.1.10 (laptop01) | OS: Windows 11 Pro | Ports: 135,445
-    [+] Found: 192.168.1.20 (server01) | OS: Linux 5.x kernel | Ports: 22,443
-    [+] Found: 192.168.1.30 (macbook) | OS: macOS Ventura | Ports: 22,80
-
-Discovered Assets (final report):
-+---------------+-----------+-------------------+-----------+--------------+--------+
-| IP            | Hostname  | OS                | Ports     | Tag          | Risk   |
-+---------------+-----------+-------------------+-----------+--------------+--------+
-| 192.168.1.1   | router    | Linux/Unix        | 80,443    | [Network]    | Medium |
-| 192.168.1.10  | laptop01  | Windows 11 Pro    | 135,445   | [Workstation]| Low    |
-| 192.168.1.20  | server01  | Linux 5.x kernel  | 22,443    | [Server]     | Medium |
-| 192.168.1.30  | macbook   | macOS Ventura     | 22,80     | [Workstation]| Low    |
-+---------------+-----------+-------------------+-----------+--------------+--------+
-
-[+] 4 active assets discovered out of 256 scanned hosts.
-[+] Total execution time: 7.89 seconds
-```
-
----
-
-### 4. Auto-detect Subnet (`--autoipaddr`)
-```bash
-python -m discovr.cli --autoipaddr
-```
-Output:
-```text
-[+] Logs saved at logs\discovr_network_log_20250906_130130.log
-[+] Auto-detected local subnet: 172.20.10.0/28
-[+] Scanning network: 172.20.10.0/28 with 1 parallel workers
-[+] Running OS detection scan (requires admin privileges)
-    [+] Found: 172.20.10.8 (Unknown) | OS: Apple macOS 12 or iOS 16 | Ports: 22,445,5000
-    [+] Found: 172.20.10.3 (Unknown) | OS: Windows 10/11 | Ports: 135,139,445,3389
-    [+] Found: 172.20.10.1 (Unknown) | OS: iOS 15 | Ports: 21,53,49152,62078
-
-Discovered Assets (final report):
-+-------------+------------+-----------------------------+---------------------+---------------+--------+
-| IP          | Hostname   | OS                          | Ports               | Tag           | Risk   |
-+-------------+------------+-----------------------------+---------------------+---------------+--------+
-| 172.20.10.8 | Unknown    | Apple macOS 12 or iOS 16    | 22,445,5000         | [Workstation] | High   |
-| 172.20.10.3 | Unknown    | Windows 10/11               | 135,139,445,3389    | [Workstation] | High   |
-| 172.20.10.1 | Unknown    | iOS 15                      | 21,53,49152,62078   | [Mobile]      | High   |
-+-------------+------------+-----------------------------+---------------------+---------------+--------+
-
-[+] 3 active assets discovered out of 16 scanned hosts.
-[+] Total execution time: 15.67 seconds
-```
-
----
-
-### 5. Auto-detect Subnet with Parallel (`--autoipaddr + --parallel`)
-```bash
-python -m discovr.cli --autoipaddr --parallel 10
-```
-Output:
-```text
-[+] Logs saved at logs\discovr_network_log_20250906_130200.log
-[+] Auto-detected local subnet: 172.20.10.0/28
-[+] Scanning network: 172.20.10.0/28 with 10 parallel workers
-[+] Running OS detection scan (requires admin privileges)
-    [+] Found: 172.20.10.8 (Unknown) | OS: Apple macOS 12 or iOS 16 | Ports: 22,445,5000
-    [+] Found: 172.20.10.3 (Unknown) | OS: Windows 10/11 | Ports: 135,139,445,3389
-    [+] Found: 172.20.10.1 (Unknown) | OS: iOS 15 | Ports: 21,53,49152,62078
-    [+] Found: 172.20.10.2 (Unknown) | OS: Unknown | Ports: None
-
-Discovered Assets (final report):
-+-------------+------------+-----------------------------+---------------------+---------------+--------+
-| IP          | Hostname   | OS                          | Ports               | Tag           | Risk   |
-+-------------+------------+-----------------------------+---------------------+---------------+--------+
-| 172.20.10.8 | Unknown    | Apple macOS 12 or iOS 16    | 22,445,5000         | [Workstation] | High   |
-| 172.20.10.3 | Unknown    | Windows 10/11               | 135,139,445,3389    | [Workstation] | High   |
-| 172.20.10.1 | Unknown    | iOS 15                      | 21,53,49152,62078   | [Mobile]      | High   |
-| 172.20.10.2 | Unknown    | Unknown                     | None                | [Unknown]     | Medium |
-+-------------+------------+-----------------------------+---------------------+---------------+--------+
-
-[+] 4 active assets discovered out of 16 scanned hosts.
-[+] Total execution time: 6.45 seconds
-```
-
----
-
-### Test Run (`tests/test_network`)
-```bash
-python -m tests.test_network
-```
-Output:
-```text
-[+] Running Network Discovery Test (Simulated)
-    [+] Found: 192.168.1.1 (router) | OS: Linux/Unix | Ports: 80,443
-    [+] Found: 192.168.1.10 (laptop01) | OS: Windows 10 Pro | Ports: 135,445
-    [+] Found: 192.168.1.20 (server01) | OS: Linux 5.x kernel | Ports: 22,80,443
-    [+] Found: 192.168.1.30 (printer01) | OS: Unknown | Ports: 9100
-
-Discovered Assets (final report):
-+---------------+-----------+-------------------+-----------+--------------+--------+
-| IP            | Hostname  | OS                | Ports     | Tag          | Risk   |
-+---------------+-----------+-------------------+-----------+--------------+--------+
-| 192.168.1.1   | router    | Linux/Unix        | 80,443    | [Network]    | Medium |
-| 192.168.1.10  | laptop01  | Windows 10 Pro    | 135,445   | [Workstation]| Medium |
-| 192.168.1.20  | server01  | Linux 5.x kernel  | 22,80,443 | [Server]     | Medium |
-| 192.168.1.30  | printer01 | Unknown           | 9100      | [Printer]    | High   |
-+---------------+-----------+-------------------+-----------+--------------+--------+
-
-[+] 4 active assets discovered out of 256 scanned hosts.
-```
-
----
-
-
-## ☁️ Cloud Discovery — Example Runs and Outputs
-
-This section documents **all possible argument combinations** for Cloud Discovery (AWS, Azure, GCP), with **real run simulated outputs** and **test run outputs**.  
-
----
-
-### 1. AWS Discovery (`--cloud aws --profile --region`)
-```bash
-python -m discovr.cli --cloud aws --profile default --region us-east-1
-```
-Output:
-```text
-[+] Logs saved at logs\discovr_cloud_log_20250906_140000.log
-[+] Discovering AWS assets...
-    [+] AWS Instance: 54.12.34.56 (aws-web01) | OS: Amazon Linux
-    [+] AWS Instance: 10.0.0.12 (aws-db01) | OS: Windows Server 2019
-    [+] AWS Instance: 10.0.0.20 (aws-dev01) | OS: Ubuntu 20.04
-
-Discovered Assets (final report):
-+-------------+-----------+---------------------+-------+---------+--------+
-| IP          | Hostname  | OS                  | Ports | Tag     | Risk   |
-+-------------+-----------+---------------------+-------+---------+--------+
-| 54.12.34.56 | aws-web01 | Amazon Linux        | N/A   | [Server]| Low    |
-| 10.0.0.12   | aws-db01  | Windows Server 2019 | N/A   | [Server]| Medium |
-| 10.0.0.20   | aws-dev01 | Ubuntu 20.04        | N/A   | [Server]| Low    |
-+-------------+-----------+---------------------+-------+---------+--------+
-
-[+] 3 cloud assets discovered.
-[+] Total execution time: 9.87 seconds
-```
-
----
-
-### 2. Azure Discovery (`--cloud azure --subscription`)
-#### Discovr – Azure Deep Asset Discovery
-
-Discovr now includes **professional Azure deep discovery**, giving you a full summary of your Azure subscription:
-- **Resource Groups** → Name, Location, Tags  
-- **Virtual Machines** → OS, Size, PowerState, Risk, OpenPorts, IPs, NIC, Subnet/VNet, Tags, AgentCompatible, AgentVersion  
-- **Virtual Networks** → Address space, Subnets, DNS, Risk  
-- **Network Security Groups** → Rules, Associations, Risk  
-- **Agent Compatibility** → Detects if VM is Azure Agent-compatible (VM Agent installed and reporting)  
-- **Risk Classification** → Based on OS + Open Ports + NSG rules  
-- **Exports**:  
-  - JSON (full nested detail)  
-  - Optimized CSVs (VMs, VNets, NSGs, Summary) under `azure_<timestamp>` folder  
-
-
-Results are shown in a **portal-like terminal output** and exported into **optimized JSON/CSV reports**.
-```bash
-python -m discovr.cli --cloud azure --subscription 12345678-abcd-1234-efgh-9876543210ab
-```
-Output:
-```text
-[+] Logs saved at /Users/demo/Documents/discovr_reports/logs/discovr_cloud_log_20250924_125409.log
-[+] Discovering Azure assets in subscription 192a6825-d524-4ba8-a71f-015a3e3a815d
-[+] Collecting Resource Groups...
-    [+] RG: Discovr-Test | Location: australiaeast
-    [+] RG: Discovr-Test-0 | Location: australiaeast
-    [+] RG: NetworkWatcherRG | Location: australiaeast
-[+] Collecting Virtual Machines...
-    [+] VM: test-0 | OS: Linux | Size: Standard_D2s_v3 | PrivateIP: 172.16.0.4 | PublicIP: 40.82.210.102 | OpenPorts: 22,443,80 | AgentCompatible: False | AgentVersion: None
-    [+] VM: test-01 | OS: Linux | Size: Standard_D2s_v3 | PrivateIP: 172.17.0.4 | PublicIP: 20.5.40.34 | OpenPorts: 22 | AgentCompatible: False | AgentVersion: None
-    [+] VM: rafi98 | OS: Linux | Size: Standard_D2s_v4 | PrivateIP: 172.18.0.4 | PublicIP: 20.213.12.141 | OpenPorts: 22 | AgentCompatible: False | AgentVersion: None
-[+] Collecting Virtual Networks...
-    [+] VNet: vnet-australiaeast | Subnets: ['snet-australiaeast-1']
-    [+] VNet: vnet-australiaeast-1 | Subnets: ['snet-australiaeast-1']
-    [+] VNet: vnet-australiaeast-2 | Subnets: ['snet-australiaeast-1']
-[+] Collecting Network Security Groups...
-    [+] NSG: test-0-nsg | Group: Discovr-Test-0 | Rules: 3
-    [+] NSG: test-01-nsg | Group: Discovr-Test-0 | Rules: 1
-    [+] NSG: rafi98-nsg | Group: Discovr-Test | Rules: 1
-
-══════════════════════════════════════════════════════════════════════
-Resource Group: Discovr-Test (Location: australiaeast)
-Tags: {}
-══════════════════════════════════════════════════════════════════════
-
-Associated Virtual Machines
-+--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+-------------------+----------------+--------------+
-| Name   | OS    | Size            | PowerState             | Risk   | OpenPorts   | PrivateIP   | PublicIP      | NIC          | Subnet/VNet                               | AgentCompatible   | AgentVersion   | Tags         |
-+--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+-------------------+----------------+--------------+
-| rafi98 | Linux | Standard_D2s_v4 | PowerState/deallocated | Medium | 22          | 172.18.0.4  | 20.213.12.141 | rafi98634_z2 | snet-australiaeast-1/vnet-australiaeast-2 | No                |                | {'Test': ''} |
-+--------+-------+-----------------+------------------------+--------+-------------+-------------+---------------+--------------+-------------------------------------------+-------------------+----------------+--------------+
-
-Associated Virtual Networks
-+----------------------+-----------------+----------------------+-------+--------+
-| Name                 | Address Space   | Subnets              | DNS   | Risk   |
-+----------------------+-----------------+----------------------+-------+--------+
-| vnet-australiaeast-2 | 172.18.0.0/16   | snet-australiaeast-1 | -     | Medium |
-+----------------------+-----------------+----------------------+-------+--------+
-
-Associated Network Security Groups
-
-NSG: rafi98-nsg | Risk: Critical | Rules: 1
-+----+--------+-------------+----------+------------+---------+
-|    | Rule   | Direction   | Access   | Protocol   |   Ports |
-+----+--------+-------------+----------+------------+---------+
-| ✅  | SSH    | Inbound     | Allow    | TCP        |      22 |
-+----+--------+-------------+----------+------------+---------+
-Associated NICs: RAFI98634_Z2
-
-----------------------------------------------------------------------
-Summary for Resource Group 'discovr-test':
-- 1 Virtual Machines (0 High/Critical Risk)
-- 1 Virtual Networks
-- 1 Network Security Groups (1 High/Critical Risk)
-----------------------------------------------------------------------
-```
-### Exported Reports
-```
-~/Documents/discovr_reports/
-   ├── logs/
-   ├── json/
-   │    └── discovr_cloud_<timestamp>.json
-   └── csv/
-        └── azure_<timestamp>/
-             ├── azure_vms_<timestamp>.csv
-             ├── azure_vnets_<timestamp>.csv
-             ├── azure_nsgs_<timestamp>.csv
-             └── azure_summary_<timestamp>.csv
-```
-
----
-
-### 3. GCP Discovery (`--cloud gcp --project --zone`)
-```bash
-python -m discovr.cli --cloud gcp --project my-gcp-project --zone us-central1-a
-```
-Output:
-```text
-[+] Logs saved at logs\discovr_cloud_log_20250906_140100.log
-[+] Discovering GCP assets in project: my-gcp-project (zone: us-central1-a)
-    [+] GCP Instance: 34.122.12.34 (gcp-web01) | OS: Ubuntu 22.04
-    [+] GCP Instance: 10.128.0.5 (gcp-db01) | OS: Windows Server 2019
-    [+] GCP Instance: 10.128.0.10 (gcp-dev01) | OS: Debian 11
-
-Discovered Assets (final report):
-+-------------+-----------+-------------------+-------+---------+--------+
-| IP          | Hostname  | OS                | Ports | Tag     | Risk   |
-+-------------+-----------+-------------------+-------+---------+--------+
-| 34.122.12.34| gcp-web01 | Ubuntu 22.04      | N/A   | [Server]| Low    |
-| 10.128.0.5  | gcp-db01  | Windows Server 2019| N/A  | [Server]| Medium |
-| 10.128.0.10 | gcp-dev01 | Debian 11         | N/A   | [Server]| Medium |
-+-------------+-----------+-------------------+-------+---------+--------+
-
-[+] 3 cloud assets discovered.
-[+] Total execution time: 11.23 seconds
-```
-
----
-
-### 4. Test Runs
-
-### Cloud Test (AWS + Azure)
-```bash
-python -m tests.test_cloud
-```
-Output:
-```text
-[+] Running Cloud Discovery Test (Simulated)
-    [+] Simulated AWS VM: 54.12.34.56 (aws-web01) | OS: Amazon Linux
-    [+] Simulated AWS VM: 10.0.0.12 (aws-db01) | OS: Windows Server 2019
-    [+] Simulated Azure VM: 20.50.30.10 (azure-app01) | OS: Ubuntu 20.04
-    [+] Simulated Azure VM: 10.0.0.5 (azure-sql01) | OS: Windows Server 2022
-
-Discovered Assets (final report):
-+-------------+--------------+---------------------+-------+---------+--------+
-| IP          | Hostname     | OS                  | Ports | Tag     | Risk   |
-+-------------+--------------+---------------------+-------+---------+--------+
-| 54.12.34.56 | aws-web01    | Amazon Linux        | N/A   | [Server]| Low    |
-| 10.0.0.12   | aws-db01     | Windows Server 2019 | N/A   | [Server]| Medium |
-| 20.50.30.10 | azure-app01  | Ubuntu 20.04        | N/A   | [Server]| Low    |
-| 10.0.0.5    | azure-sql01  | Windows Server 2022 | N/A   | [Server]| Low    |
-+-------------+--------------+---------------------+-------+---------+--------+
-
-[+] 4 cloud assets discovered (simulated).
-```
-
-### GCP Test
-```bash
-python -m tests.test_gcp
-```
-Output:
-```text
-[+] Running GCP Discovery Test (Simulated)
-    [+] Simulated GCP Instance: 34.122.12.34 (gcp-web01) | OS: Ubuntu 22.04
-    [+] Simulated GCP Instance: 10.128.0.5 (gcp-db01) | OS: Windows Server 2019
-
-Discovered Assets (final report):
-+-------------+-----------+-------------------+-------+---------+--------+
-| IP          | Hostname  | OS                | Ports | Tag     | Risk   |
-+-------------+-----------+-------------------+-------+---------+--------+
-| 34.122.12.34| gcp-web01 | Ubuntu 22.04      | N/A   | [Server]| Low    |
-| 10.128.0.5  | gcp-db01  | Windows Server 2019| N/A  | [Server]| Medium |
-+-------------+-----------+-------------------+-------+---------+--------+
-
-[+] 2 cloud assets discovered (simulated).
-```
-
-# 🏢 Active Directory Discovery — Example Runs and Outputs
-
-This section documents **all possible argument combinations** for Active Directory Discovery, with **real run simulated outputs** and **test run outputs**.  
-
----
-
-### 1. Real Run (`--ad --domain --username --password`)
-```bash
-python -m discovr.cli --ad --domain mydomain.local --username admin@mydomain.local --password "Secret123"
-```
-Output:
-```text
-[+] Logs saved at logs\discovr_ad_log_20250906_150000.log
-[+] Discovering Active Directory assets in mydomain.local
-    [+] AD Computer: 192.168.1.25 (HR-PC01.mydomain.local) | OS: Windows 10 Pro
-    [+] AD Computer: 192.168.1.30 (DB-SERVER01.mydomain.local) | OS: Windows Server 2019
-    [+] AD Computer: 192.168.1.40 (DEV-LAPTOP.mydomain.local) | OS: Windows 11 Pro
-
-Discovered Assets (final report):
-+--------------+-----------------------------+--------------------+-------+--------------+----------+
-| IP           | Hostname                    | OS                 | Ports | Tag          | Risk     |
-+--------------+-----------------------------+--------------------+-------+--------------+----------+
-| 192.168.1.25 | HR-PC01.mydomain.local      | Windows 10 Pro     | N/A   | [Workstation]| Medium   |
-| 192.168.1.30 | DB-SERVER01.mydomain.local  | Windows Server 2019| N/A   | [Server]     | Medium   |
-| 192.168.1.40 | DEV-LAPTOP.mydomain.local   | Windows 11 Pro     | N/A   | [Workstation]| Low      |
-+--------------+-----------------------------+--------------------+-------+--------------+----------+
-
-[+] 3 Active Directory assets discovered.
-[+] Total execution time: 6.34 seconds
-[+] Logs saved at logs/discovr_ad_log_20250906_150000.log
-
-Do you want to save results? (yes/no): yes
-Choose format (csv/json/both): both
-[+] CSV saved: csv_report\discovr_ad_20250906_150000.csv
-[+] JSON saved: json_report\discovr_ad_20250906_150000.json
-```
-
----
-
-### 2. Missing Arguments Example (Error Handling)
-```bash
-python -m discovr.cli --ad --domain mydomain.local --username admin@mydomain.local
-```
-Output:
-```text
-[+] Logs saved at logs\discovr_ad_log_20250906_150030.log
-[!] AD discovery requires --domain, --username, and --password
-```
-
----
-
-### 3. Test Run (`tests/test_active_directory`)
-```bash
-python -m tests.test_active_directory
-```
-Output:
-```text
-[+] Running Active Directory Discovery Test (Simulated)
-    [+] Simulated AD Computer: 192.168.1.25 (HR-PC01.mydomain.local) | OS: Windows 10 Pro
-    [+] Simulated AD Computer: 192.168.1.30 (DB-SERVER01.mydomain.local) | OS: Windows Server 2019
-    [+] Simulated AD Computer: 192.168.1.40 (DEV-LAPTOP.mydomain.local) | OS: Windows 11 Pro
-    [+] Simulated AD Computer: 192.168.1.50 (LAB-PC.mydomain.local) | OS: Windows 7 Pro
-
-Discovered Assets (final report):
-+--------------+-----------------------------+--------------------+-------+--------------+----------+
-| IP           | Hostname                    | OS                 | Ports | Tag          | Risk     |
-+--------------+-----------------------------+--------------------+-------+--------------+----------+
-| 192.168.1.25 | HR-PC01.mydomain.local      | Windows 10 Pro     | N/A   | [Workstation]| Medium   |
-| 192.168.1.30 | DB-SERVER01.mydomain.local  | Windows Server 2019| N/A   | [Server]     | Medium   |
-| 192.168.1.40 | DEV-LAPTOP.mydomain.local   | Windows 11 Pro     | N/A   | [Workstation]| Low      |
-| 192.168.1.50 | LAB-PC.mydomain.local       | Windows 7 Pro      | N/A   | [Workstation]| Critical |
-+--------------+-----------------------------+--------------------+-------+--------------+----------+
-
-[+] 4 Active Directory assets discovered (simulated).
-```
-
----
-
-# 📡 Passive Discovery — Example Runs and Outputs
-
-This section documents **all possible argument combinations** for Passive Discovery, with **real run simulated outputs** and **test run outputs**.  
-
----
-
-### 1. Interactive Mode (`--passive`)
-```bash
-python -m discovr.cli --passive
-```
-Output:
-```text
-[+] Logs saved at logs\discovr_passive_log_20250906_160000.log
-[+] Running passive discovery
-[+] Available interfaces:
-    [1] Ethernet (Intel(R) Ethernet Controller)
-    [2] Wi-Fi (Intel(R) Wi-Fi 6 AX200)
-    [3] Loopback Pseudo-Interface 1
-
-Select interface by number: 2
-[+] Starting passive discovery on interface: Wi-Fi
-[+] Listening for ARP, DNS, DHCP, and mDNS traffic (auto-stop after 180 seconds or Ctrl+C)...
-    [+] Passive Discovery Found: 192.168.1.50 (printer.local)
-    [+] Passive Discovery Found: 192.168.1.60 (iot-camera.local)
-    [+] Passive Discovery Found: 192.168.1.70 (Johns-iPhone)
-    [+] Passive Discovery Found: 192.168.1.80 (macbook.local)
-
-Discovered Assets (final report):
-+-------------+-------------------+----------+-------+--------------+--------+
-| IP          | Hostname          | OS       | Ports | Tag          | Risk   |
-+-------------+-------------------+----------+-------+--------------+--------+
-| 192.168.1.50| printer.local     | Unknown  | N/A   | [Printer]    | High   |
-| 192.168.1.60| iot-camera.local  | Unknown  | N/A   | [IoT]        | High   |
-| 192.168.1.70| Johns-iPhone      | iOS 16   | N/A   | [Mobile]     | Medium |
-| 192.168.1.80| macbook.local     | macOS 13 | N/A   | [Workstation]| Low    |
-+-------------+-------------------+----------+-------+--------------+--------+
-
-[+] 4 assets discovered during passive monitoring.
-[+] Total execution time: 180.00 seconds
-[+] Logs saved at logs/discovr_passive_log_20250906_160000.log
-
-Do you want to save results? (yes/no): yes
-Choose format (csv/json/both): both
-[+] CSV saved: csv_report\discovr_passive_20250906_160000.csv
-[+] JSON saved: json_report\discovr_passive_20250906_160000.json
-```
-
----
-
-### 2. Specific Interface with Timeout (`--passive --iface --timeout`)
-```bash
-python -m discovr.cli --passive --iface "Wi-Fi" --timeout 60
-```
-Output:
-```text
-[+] Logs saved at logs\discovr_passive_log_20250906_160030.log
-[+] Running passive discovery
-[+] Starting passive discovery on interface: Wi-Fi
-[+] Listening for ARP, DNS, DHCP, and mDNS traffic (auto-stop after 60 seconds or Ctrl+C)...
-    [+] Passive Discovery Found: 192.168.1.55 (printer.local)
-    [+] Passive Discovery Found: 192.168.1.65 (iot-lightbulb.local)
-    [+] Passive Discovery Found: 192.168.1.75 (samsung-galaxy)
-    [+] Passive Discovery Found: 192.168.1.85 (macbook-air.local)
-
-Discovered Assets (final report):
-+-------------+-----------------------+----------+-------+--------------+--------+
-| IP          | Hostname              | OS       | Ports | Tag          | Risk   |
-+-------------+-----------------------+----------+-------+--------------+--------+
-| 192.168.1.55| printer.local         | Unknown  | N/A   | [Printer]    | High   |
-| 192.168.1.65| iot-lightbulb.local   | Unknown  | N/A   | [IoT]        | High   |
-| 192.168.1.75| samsung-galaxy        | Android  | N/A   | [Mobile]     | Medium |
-| 192.168.1.85| macbook-air.local     | macOS 12 | N/A   | [Workstation]| Low    |
-+-------------+-----------------------+----------+-------+--------------+--------+
-
-[+] 4 assets discovered during passive monitoring.
-[+] Total execution time: 60.00 seconds
-[+] Logs saved at logs/discovr_passive_log_20250906_160030.log
-```
-
----
-
-### 3. Test Run (`tests/test_passive`)
-```bash
-python -m tests.test_passive
-```
-Output:
-```text
-[+] Running Passive Discovery Test (Simulated)
-    [+] Simulated Passive Asset: 192.168.1.50 (printer.local)
-    [+] Simulated Passive Asset: 192.168.1.60 (iot-camera.local)
-    [+] Simulated Passive Asset: 192.168.1.70 (iphone.local)
-
-Discovered Assets (final report):
-+-------------+-------------------+----------+-------+--------------+--------+
-| IP          | Hostname          | OS       | Ports | Tag          | Risk   |
-+-------------+-------------------+----------+-------+--------------+--------+
-| 192.168.1.50| printer.local     | Unknown  | N/A   | [Printer]    | High   |
-| 192.168.1.60| iot-camera.local  | Unknown  | N/A   | [IoT]        | High   |
-| 192.168.1.70| iphone.local      | iOS 15   | N/A   | [Mobile]     | Medium |
-+-------------+-------------------+----------+-------+--------------+--------+
-
-[+] 3 assets discovered during passive monitoring (simulated).
-```
-
-## 🔹 Platform Notes
-
-- **Windows:** Run PowerShell as **Administrator**. Use interface names like `"Wi-Fi"`, `"Ethernet"`.  
-- **Linux/Mac:** Run with `sudo`. Interfaces are `eth0`, `en0`, `wlan0`.  
-- **Timeout:** Passive default = 180s. Override with `--timeout <seconds>`.  
-- **Parallel:** Default 1. Recommended 5–20.  
-- **AutoIPAddr:** Automatically finds your local subnet.  
-
----
-
-## 🔹 Build Executable
-```bash
-pyinstaller --onefile --name discovr discovr/cli.py
-```
-
-## 🔹 Dockerfile
-```bash
-docker build -t discovr .
-```
-
-## 🔹 requirements.txt
-```bash
+git clone https://github.com/SowatRafi/Discovr-Assest-Discovery.git
+cd Discovr-Assest-Discovery
+python -m venv .venv
+source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+python -m discovr                    # web dashboard
+python -m discovr --help             # command line
 ```
 
-# Discovr - Non-Interactive Export Options (--save / --format)
+## Web dashboard
 
-This document demonstrates how to use the new `--save` and `--format` options with **Network Discovery**.
+Running Discovr without options starts the dashboard and opens it in your default browser.
+The terminal shows the address, e.g. `http://127.0.0.1:53817/#token=...` - the token part is a
+private per-launch key, so share neither the link nor screenshots of it.
 
----
+- **New scan** (left) - pick a source, fill in the few fields it needs and start. Several scans
+  can run at once; each shows live progress, the number of assets found and a *Stop* button.
+- **Filters** (top) - search any field (`/` jumps to the search box), filter by risk, device
+  type, source or agent capability. Tiles, breakdowns and the table always agree with the filters.
+- **Risk breakdown / Device types** - click a row to filter by it.
+- **Assets** - sortable table; select a hostname for every field Discovr knows about it.
+- **Export** - CSV, JSON (re-importable) or a self-contained HTML report of the *filtered* view.
+  **Import JSON** merges reports from other runs, e.g. a headless scan from a jump box.
 
-## 🔹 Arguments
-- `--save yes` → Automatically save results without prompting.  
-- `--save no` → Do not save results (skips prompts).  
-- `--format csv` → Save only CSV file.  
-- `--format json` → Save only JSON file.  
-- `--format both` → Save both CSV and JSON.  
+`--port 8080` fixes the port and `--no-browser` skips opening a browser.
 
-If no `--save` or `--format` is provided, Discovr remains **interactive** and will ask:  
-```
-Do you want to save results? (yes/no):
-Choose format (csv/json/both):
-```
+## Command line
 
----
+Every scan is also available headless - handy for servers, SSH sessions and scripts.
 
-## 🔹 Example Run (Network Discovery with --save and --format)
-
-### Command
 ```bash
-python -m discovr.cli --scan-network 192.168.1.0/24 --parallel 5 --save yes --format both
+discovr --autoipaddr                                   # sweep the local subnet
+discovr --scan-network 10.10.0.0/22 --intensity gentle # sensitive network
+discovr --scan-network 10.0.0.5,10.0.1.0/24 --ports 22,3389,5985-5986
+discovr --scan-network 192.168.1.0/24 --os-detect      # + nmap -O (needs nmap and admin/root)
+discovr --ad --domain corp.local --username auditor@corp.local        # password is prompted
+discovr --cloud aws                                    # every enabled region
+discovr --cloud azure --subscription <id>              # omit --subscription to scan all
+discovr --cloud gcp --project my-project --gcp-credentials key.json
+discovr --passive --iface eth0 --timeout 300           # listen only
+discovr --scan-network 10.0.0.0/24 --save yes --format all --out ./reports
 ```
 
-### Output
-```text
-[+] Logs saved at /Users/demo/Documents/discovr_reports/logs/discovr_network_log_20250906_230000.log
-[+] Scanning network: 192.168.1.0/24 with 5 parallel workers
-[+] Running OS detection scan (requires admin privileges)
-    [+] Found: 192.168.1.1 (router) | OS: Linux/Unix | Ports: 80,443
-    [+] Found: 192.168.1.10 (laptop01) | OS: Windows 10 Pro | Ports: 135,445
-    [+] Found: 192.168.1.20 (server01) | OS: Linux 5.x kernel | Ports: 22,80,443
+(From source, replace `discovr` with `python -m discovr`.)
 
-Discovered Assets (final report):
-+---------------+-----------+-------------------+-----------+--------------+--------+
-| IP            | Hostname  | OS                | Ports     | Tag          | Risk   |
-+---------------+-----------+-------------------+-----------+--------------+--------+
-| 192.168.1.1   | router    | Linux/Unix        | 80,443    | [Network]    | Medium |
-| 192.168.1.10  | laptop01  | Windows 10 Pro    | 135,445   | [Workstation]| Medium |
-| 192.168.1.20  | server01  | Linux 5.x kernel  | 22,80,443 | [Server]     | Medium |
-+---------------+-----------+-------------------+-----------+--------------+--------+
+| Option | Purpose |
+|---|---|
+| *(none)*, `--ui`, `--port`, `--no-browser` | Web dashboard |
+| `--scan-network RANGE`, `--autoipaddr` | Active network sweep of a CIDR / IP / list (up to a /16), or of the local subnet |
+| `--ports`, `--intensity`, `--parallel`, `--os-detect` | Port list, load profile, probes in flight, nmap OS fingerprinting |
+| `--ad --domain --username [--dc] [--ldaps]` | Active Directory computers (password: prompt, or `DISCOVR_AD_PASSWORD`) |
+| `--cloud aws [--profile] [--region all]` | EC2 instances |
+| `--cloud azure [--subscription]` | Azure virtual machines |
+| `--cloud gcp [--project] [--zone] [--gcp-credentials]` | Compute Engine instances |
+| `--passive [--iface] [--timeout]` | Listen-only discovery |
+| `--save yes/no`, `--format csv/json/html/both/all`, `--out DIR` | Reports (default: CSV + JSON in `Documents/discovr_reports`) |
 
-[+] 3 active assets discovered out of 256 scanned hosts.
-[+] Total execution time: 19.42 seconds
-[+] Logs saved at /Users/demo/Documents/discovr_reports/logs/discovr_network_log_20250906_230000.log
-[+] CSV saved: /Users/demo/Documents/discovr_reports/csv/discovr_network_20250906_230000.csv
-[+] JSON saved: /Users/demo/Documents/discovr_reports/json/discovr_network_20250906_230000.json
+Without `--save`, Windows asks whether to save (auto-saving after 15 seconds) and macOS/Linux
+save automatically.
+
+## Discovery sources
+
+### Network (active)
+
+1. **Sweep** every address on 10 discovery ports. Any answer - an open port *or* an immediate
+   refusal - proves the host is up. Plain TCP connects need no raw sockets, so no admin rights.
+2. **ARP cache** - the sweep made the OS resolve every local address, so hosts whose firewall
+   drops all TCP still appear, with their MAC address.
+3. **Fingerprint** live hosts on 44 common service ports while reverse DNS runs in parallel; SSH
+   banners and exposed services give an OS guess (Windows, domain controller, Ubuntu, iOS, ...).
+4. **Optional `--os-detect`** hands the live hosts to a single batched `nmap -O` run.
+
+| Intensity | Probes in flight | Timeout | Use for |
+|---|---|---|---|
+| gentle | 64 | 2 s | Fragile or monitored networks (OT, clinical, legacy) |
+| normal | 512 | 1 s | Default |
+| aggressive | 2,048 | 0.5 s | Large ranges when speed matters more than noise |
+
+Worst-case sweep time is roughly *addresses × 10 ÷ probes in flight × timeout*: a silent /24
+takes about 5 s at *normal*. Silent addresses dominate, and live hosts answer in milliseconds.
+
+### Passive
+
+Sends nothing. Listens for ARP, DHCP (hostname + vendor-class OS fingerprint), mDNS, NetBIOS,
+LLMNR and SSDP, which is how devices announce themselves. It needs packet-capture rights:
+Administrator plus [Npcap](https://npcap.com) on Windows, root on macOS/Linux.
+
+### Active Directory
+
+Lists every computer account with OS, OU, last logon, enabled/stale state and domain-controller
+role, then resolves IPs. The password never crosses the network in cleartext (LDAPS, else
+StartTLS, else NTLM) and is never stored. A normal domain user account is enough.
+
+### Cloud (credentials resolved at runtime, read-only)
+
+| Provider | Uses | Minimum permissions |
+|---|---|---|
+| AWS | `aws configure` / `aws sso login` profiles, environment variables, instance role | `ec2:DescribeRegions`, `ec2:DescribeInstances`, `ec2:DescribeSecurityGroups`, `ssm:DescribeInstanceInformation` |
+| Azure | `az login`, `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_CLIENT_SECRET`, managed identity | built-in **Reader** role on the subscription(s) |
+| GCP | `gcloud auth application-default login`, `GOOGLE_APPLICATION_CREDENTIALS`, `--gcp-credentials key.json` | **Compute Viewer** (`roles/compute.viewer`) |
+
+Discovr lists virtual machines across all regions / subscriptions / zones and joins their
+security groups, NSGs or firewall rules. **Ports** shows what the firewall allows,
+**ExposedPorts** what is open to the whole internet.
+
+## How assets are classified
+
+- **Type** (`[Workstation]`, `[Server]`, `[Printer]`, `[IoT]`, `[Network]`, `[Mobile]`,
+  `[Tablet]`, `[WebHost]`, `[Unknown]`) comes from the OS name, hostname, open ports and cloud
+  metadata.
+- **Agent-capable** is set for workstations and servers: the hosts a security agent can run on.
+- **Risk** is a triage heuristic, not a vulnerability scan:
+
+| Risk | When |
+|---|---|
+| Critical | Unsupported OS (XP-8.1, Server 2003-2012, CentOS 7/8), or an admin / database / file-share port open to the internet |
+| High | Other internet exposure, Windows 10 (end of support Oct 2025), Telnet/FTP, IoT and printers, RDP/VNC on endpoints |
+| Medium | Servers, network gear, unidentified devices |
+| Low | Current, supported desktops (Windows 11, macOS) |
+
+When several sources see the same machine (same IP or MAC, or same hostname when no IP is
+known) they are merged: a real OS name beats a port-based guess, and ports and sources are combined.
+
+## Reports
+
+`CSV`, `JSON` and `HTML` land in `Documents/discovr_reports/{csv,json,html}` (or `--out DIR`);
+every run also writes a log to `.../logs`. Each field any source reported becomes a column.
+JSON reports can be re-imported into the dashboard.
+
+## Building and development
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q                          # unit + integration tests (no network needed)
+pyinstaller --noconfirm discovr.spec         # -> dist/discovr(.exe)
+docker build -t discovr .                    # CLI in a container
 ```
 
----
+GitHub Actions (`.github/workflows/build.yml`) tests on Windows, macOS and Linux, audits
+dependencies with `pip-audit`, builds the three binaries, and publishes them with SHA-256
+checksums when a `v*` tag is pushed.
 
-## 🔹 Notes
-- Works on all platforms (Windows, Linux, macOS).  
-- Useful for **non-interactive runs** (e.g., cron jobs, macOS `sudo` execution, CI/CD).  
-- Can be used with **any feature** (Network, Cloud, AD, Passive).  
+```
+discovr/
+  cli.py        command line (and UI launcher)      server.py  local web server + REST API
+  network.py    async TCP sweep engine              passive.py listen-only discovery
+  active_directory.py  LDAP                         aws.py / azure.py / gcp.py  cloud providers
+  core.py       merge, export, reporting            tagger.py / risk.py  classification
+  ui/           dashboard (HTML/CSS/JS, no build step)
+```
+
+## Responsible use
+
+Only scan networks, directories and cloud accounts you own or are explicitly authorised to
+assess. Active scanning can trip intrusion-detection systems; agree the scope and timing with
+the network owner first, and prefer `--intensity gentle` or passive mode on fragile networks.
+
+## License
+
+[MIT](LICENSE). The portable binaries also bundle third-party open-source libraries (including
+Scapy, GPL-2.0, and ldap3, LGPL-3.0) under their own licences.
