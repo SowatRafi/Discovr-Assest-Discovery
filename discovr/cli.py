@@ -85,6 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
                                        "or set DISCOVR_AD_PASSWORD")
     ad.add_argument("--dc", help="domain controller host/IP (default: resolve the domain name)")
     ad.add_argument("--ldaps", action="store_true", help="bind over LDAPS/636 (default: StartTLS, else NTLM)")
+    ad.add_argument("--ca-file", metavar="PEM", help="domain CA certificate to verify the DC (default: system "
+                                                     "trust store; a DC that cannot be verified gets NTLM)")
 
     passive = parser.add_argument_group("passive discovery (listen only; needs capture rights)")
     passive.add_argument("--passive", action="store_true", help="learn devices from ARP/DHCP/mDNS/NetBIOS traffic")
@@ -188,7 +190,8 @@ def run_scan(feature, args):
         password = args.password or os.environ.get("DISCOVR_AD_PASSWORD") \
             or getpass.getpass(f"Password for {args.username}: ")
         print(f"[+] Discovering Active Directory assets in {args.domain}")
-        assets = ADDiscovery(args.domain, args.username, password, dc=args.dc, use_ldaps=args.ldaps).run()
+        assets = ADDiscovery(args.domain, args.username, password, dc=args.dc, use_ldaps=args.ldaps,
+                             ca_file=args.ca_file).run()
         return assets, len(assets), "AD assets"
 
     from discovr.passive import PassiveDiscovery

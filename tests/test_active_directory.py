@@ -45,6 +45,70 @@ def test_ntlm_username_forms():
     assert ADDiscovery("corp.local", "alice", "x")._ntlm_user() == "corp.local\\alice"
 
 
+class FakeServer:
+    """Records how ldap3.Server was built."""
+
+    def __init__(self, host, port=389, use_ssl=False, tls=None, connect_timeout=None):
+        self.host, self.port, self.tls = host, port, tls
+
+
+class FakeConnection:
+    """Stand-in for ldap3.Connection that logs every step of the bind flow."""
+
+    log = []
+    tls_works = True
+
+    def __init__(self, server, user, password, authentication=None, **options):
+        self.authentication = authentication
+        self.result = {"description": "success"}
+
+    def open(self):
+        FakeConnection.log.append("open")
+
+    def start_tls(self):
+        from ldap3.core.exceptions import LDAPStartTLSError
+
+        FakeConnection.log.append("start_tls")
+        if not FakeConnection.tls_works:
+            raise LDAPStartTLSError("certificate verify failed")
+        return True
+
+    def bind(self):
+        FakeConnection.log.append(f"bind:{self.authentication}")
+        return True
+
+    def unbind(self):
+        FakeConnection.log.append("unbind")
+
+
+def connect_with(monkeypatch, tls_works):
+    """Run ADDiscovery._connect against the fakes; returns (method, logged steps)."""
+    import ldap3
+
+    FakeConnection.log, FakeConnection.tls_works = [], tls_works
+    monkeypatch.setattr(ldap3, "Server", FakeServer)
+    monkeypatch.setattr(ldap3, "Connection", FakeConnection)
+    _, method = ADDiscovery("corp.local", "alice@corp.local", "pw")._connect()
+    return method, FakeConnection.log
+
+
+def test_tls_always_verifies_certificates():
+    import ssl
+
+    assert ADDiscovery("corp.local", "a", "pw")._tls().validate == ssl.CERT_REQUIRED
+
+
+def test_simple_bind_only_inside_verified_tls(monkeypatch):
+    method, log = connect_with(monkeypatch, tls_works=True)
+    assert log == ["open", "start_tls", "bind:SIMPLE"] and method.startswith("StartTLS")
+
+
+def test_unverifiable_certificate_falls_back_to_ntlm_never_simple(monkeypatch):
+    """Security review #1: a MITM with a fake certificate must never receive a simple bind."""
+    method, log = connect_with(monkeypatch, tls_works=False)
+    assert "bind:SIMPLE" not in log and log[-1] == "bind:NTLM" and method.startswith("NTLM")
+
+
 def test_run_pages_through_directory(monkeypatch):
     """End-to-end over ldap3's in-memory directory: 1,205 computers > AD's 1,000 unpaged cap."""
     server = Server("fake-dc", get_info=OFFLINE_AD_2012_R2)

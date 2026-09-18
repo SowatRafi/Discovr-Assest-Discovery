@@ -31,7 +31,7 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 - **Local web dashboard** - filters, search, detail view, CSV / JSON / HTML export and JSON
   import. Works fully offline.
 - **Secure by default** - the UI listens on 127.0.0.1 only, behind a per-launch token; AD
-  passwords never cross the network in cleartext; cloud credentials come only from each
+  passwords are only sent over verified TLS (else NTLM); cloud credentials come only from each
   provider's own login; reports neutralise CSV and HTML injection. See [SECURITY.md](SECURITY.md).
 
 ## Quick start
@@ -105,7 +105,7 @@ discovr --scan-network 10.0.0.0/24 --save yes --format all --out ./reports
 | *(none)*, `--ui`, `--port`, `--no-browser` | Web dashboard |
 | `--scan-network RANGE`, `--autoipaddr` | Active network sweep of a CIDR / IP / list (up to a /16), or of the local subnet |
 | `--ports`, `--intensity`, `--parallel`, `--os-detect` | Port list, load profile, probes in flight, nmap OS fingerprinting |
-| `--ad --domain --username [--dc] [--ldaps]` | Active Directory computers (password: prompt, or `DISCOVR_AD_PASSWORD`) |
+| `--ad --domain --username [--dc] [--ldaps] [--ca-file]` | Active Directory computers (password: prompt, or `DISCOVR_AD_PASSWORD`) |
 | `--cloud aws [--profile] [--region all]` | EC2 instances |
 | `--cloud azure [--subscription]` | Azure virtual machines |
 | `--cloud gcp [--project] [--zone] [--gcp-credentials]` | Compute Engine instances |
@@ -145,8 +145,10 @@ Administrator plus [Npcap](https://npcap.com) on Windows, root on macOS/Linux.
 ### Active Directory
 
 Lists every computer account with OS, OU, last logon, enabled/stale state and domain-controller
-role, then resolves IPs. The password never crosses the network in cleartext (LDAPS, else
-StartTLS, else NTLM) and is never stored. A normal domain user account is enough.
+role, then resolves IPs. The password is only sent inside a TLS channel whose certificate
+verified (add `--ca-file corp-ca.pem` if your domain CA is not in the system trust store);
+otherwise Discovr authenticates with NTLM. It is never stored. A normal domain user account is
+enough.
 
 ### Cloud (credentials resolved at runtime, read-only)
 

@@ -108,3 +108,43 @@ def test_network_scan_end_to_end_then_export_import_and_clear(ui):
 def test_cancel_unknown_job(ui):
     port, token = ui
     assert request(port, "POST", "/api/scans/deadbeef/cancel", token, {})[0] == 400
+
+
+def raw_request(port, head_lines, body=b""):
+    """Send a hand-written request (to forge headers http.client would fix); returns the status."""
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as sock:
+        sock.sendall(("\r\n".join(head_lines) + "\r\n\r\n").encode() + body)
+        return int(sock.recv(4096).split(b" ", 2)[1])
+
+
+def test_negative_or_chunked_body_lengths_are_rejected(ui):
+    """Security review #2: Content-Length -1 used to bypass the 32 MB cap."""
+    port, token = ui
+    head = [f"POST /api/assets/import HTTP/1.1", f"Host: 127.0.0.1:{port}", f"X-Discovr-Token: {token}",
+            "Content-Type: application/json"]
+    assert raw_request(port, head + ["Content-Length: -1"], b"[]") == 400
+    assert raw_request(port, head + ["Content-Length: abc"], b"[]") == 400
+    assert raw_request(port, head + ["Transfer-Encoding: chunked"], b"2\r\n[]\r\n0\r\n\r\n") == 400
+
+
+def test_keep_alive_survives_routes_that_ignore_the_body(ui):
+    """The UI's Stop button posts {} to /cancel; unread bytes used to corrupt the next request."""
+    port, token = ui
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    headers = {"Host": f"127.0.0.1:{port}", "X-Discovr-Token": token, "Content-Type": "application/json"}
+    conn.request("POST", "/api/scans/deadbeef/cancel", body=b"{}", headers=headers)
+    assert conn.getresponse().read() and True
+    conn.request("GET", "/api/state", headers=headers)       # same TCP connection
+    response = conn.getresponse()
+    assert response.status == 200 and "jobs" in json.loads(response.read())
+    conn.close()
+
+
+def test_missing_certificate_or_key_files_are_field_errors(ui):
+    port, token = ui
+    status, _, err = request(port, "POST", "/api/scans", token, {"kind": "ad", "domain": "corp.local",
+                                                                  "username": "u", "password": "p",
+                                                                  "caFile": "C:/nope/ca.pem"})
+    assert status == 400 and err["field"] == "caFile"
+    status, _, err = request(port, "POST", "/api/scans", token, {"kind": "gcp", "credentialsFile": "/nope.json"})
+    assert status == 400 and err["field"] == "credentialsFile"

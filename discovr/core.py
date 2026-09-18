@@ -198,7 +198,7 @@ def to_csv(assets) -> str:
     buffer = io.StringIO()
     fields = columns_for(assets)
     writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(fields)
+    writer.writerow(csv_safe(f) for f in fields)  # keys come from imported data too: headers can carry formulas
     for asset in assets:
         writer.writerow(csv_safe(asset.get(f)) for f in fields)
     return buffer.getvalue()

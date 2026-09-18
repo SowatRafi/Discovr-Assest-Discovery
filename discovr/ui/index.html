@@ -155,11 +155,16 @@
                   <svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg>
                 </button>
               </div>
-              <p class="hint">Sent only to the domain controller over TLS or NTLM. Never stored.</p>
+              <p class="hint">Only sent inside a verified TLS channel, otherwise NTLM is used. Never stored.</p>
             </div>
             <div class="field">
               <label for="f-dc">Domain controller <small>(optional)</small></label>
               <input id="f-dc" name="dc" autocomplete="off" spellcheck="false" placeholder="dc01.corp.local">
+            </div>
+            <div class="field">
+              <label for="f-cafile">Domain CA certificate <small>(optional)</small></label>
+              <input id="f-cafile" name="caFile" autocomplete="off" spellcheck="false" placeholder="C:\certs\corp-root-ca.pem" aria-describedby="h-cafile">
+              <p class="hint" id="h-cafile">PEM file used to verify the domain controller. Without it the system trust store is used.</p>
             </div>
             <label class="check"><input type="checkbox" name="ldaps"><span>Use LDAPS (port 636)</span></label>
           </fieldset>

@@ -37,7 +37,10 @@ def port_set(value) -> set:
             return set(range(1, 65536))
         low, _, high = token.partition("-")
         if low.isdigit() and (high.isdigit() or not high):
-            ports.update(range(int(low), int(high or low) + 1))
+            # Clamp to real ports: an imported report saying "1-9999999999" must not build a
+            # multi-billion element set (memory exhaustion while the UI lock is held).
+            start, end = max(int(low), 1), min(int(high or low), 65535)
+            ports.update(range(start, end + 1))
     return ports
 
 

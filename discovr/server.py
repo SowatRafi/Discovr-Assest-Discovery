@@ -65,6 +65,14 @@ def _text(params, name, required=False, label=None):
     return value or None
 
 
+def _file(params, name, label):
+    """Optional path parameter that must point to an existing file (checked before the scan starts)."""
+    path = _text(params, name)
+    if path and not Path(path).is_file():
+        raise BadRequest(f"{label} not found: {path}", field=name)
+    return path
+
+
 def build_scanner(kind, params):
     """Validate UI parameters and return (scanner, human label). Imports providers lazily."""
     if kind == "network":
@@ -102,14 +110,16 @@ def build_scanner(kind, params):
         password = params.get("password") or ""
         if not password:
             raise BadRequest("Password is required", field="password")
-        return (ADDiscovery(domain, username, password, dc=_text(params, "dc"), use_ldaps=bool(params.get("ldaps"))),
+        return (ADDiscovery(domain, username, password, dc=_text(params, "dc"), use_ldaps=bool(params.get("ldaps")),
+                            ca_file=_file(params, "caFile", "CA certificate file")),
                 f"Active Directory {domain}")
     if kind in ("aws", "azure", "gcp"):
         from discovr.cloud import CloudDiscovery
 
         scanner = CloudDiscovery(kind, profile=_text(params, "profile"), region=_text(params, "region") or "all",
                                  subscription=_text(params, "subscription"), project=_text(params, "project"),
-                                 zone=_text(params, "zone"), credentials_file=_text(params, "credentialsFile"))
+                                 zone=_text(params, "zone"),
+                                 credentials_file=_file(params, "credentialsFile", "Service-account key file"))
         scope = _text(params, "project") or _text(params, "subscription") or _text(params, "region") or "all"
         return scanner, f"{kind.upper() if kind != 'azure' else 'Azure'} ({scope})"
     raise BadRequest(f"Unknown scan type: {kind}")
@@ -256,6 +266,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "Discovr"   # do not advertise the Python version
     sys_version = ""
     protocol_version = "HTTP/1.1"  # keep-alive makes UI polling cheap
+    timeout = 30                   # seconds per socket read: idle or trickling (slowloris) clients are dropped
 
     def log_message(self, fmt, *args):
         """Silence per-request logging (the UI polls every second)."""
@@ -278,15 +289,32 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _read_body(self):
+        """Consume the request body up front, size-capped.
+
+        Every route reads it (even ones that ignore it): unread bytes would be parsed as the
+        start of the next request on the same keep-alive connection. Invalid lengths
+        (negative, non-numeric, over MAX_BODY) and chunked uploads, which this server cannot
+        decode, close the connection instead.
+        """
+        if "Transfer-Encoding" in self.headers:
+            self.close_connection = True
+            raise BadRequest("Chunked request bodies are not supported")
+        raw_length = self.headers.get("Content-Length")
+        if raw_length is None:
+            return b""
+        length = int(raw_length) if raw_length.strip().isdigit() else -1
+        if not 0 <= length <= MAX_BODY:
+            self.close_connection = True
+            raise BadRequest("Invalid or too large Content-Length")
+        return self.rfile.read(length)
+
     def _body(self):
-        """Parsed JSON request body (size-capped; JSON content type required)."""
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > MAX_BODY:
-            raise BadRequest("Request body too large")
+        """The request body parsed as JSON (an application/json content type is required)."""
         if self.headers.get_content_type() != "application/json":
             raise BadRequest("Expected an application/json body")
         try:
-            return json.loads(self.rfile.read(length) or b"{}")
+            return json.loads(self._raw or b"{}")
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise BadRequest("Malformed JSON")
 
@@ -300,8 +328,9 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("DELETE")
 
     def _dispatch(self, method):
-        """Check Host and token, then route; errors become JSON responses."""
+        """Drain the body, check Host and token, then route; errors become JSON responses."""
         try:
+            self._raw = self._read_body()
             if self.headers.get("Host", "") not in self.server.allowed_hosts:
                 return self._send(403, {"error": "Unexpected Host header"})  # DNS rebinding guard
             url = urlsplit(self.path)
