@@ -22,6 +22,7 @@ logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 if platform.system() == "Windows":
     import msvcrt
 
+from discovr import __version__
 from discovr.core import Logger, Exporter, Reporter
 from discovr.network import NetworkDiscovery
 # Cloud, AD and passive modules pull in heavy SDKs (boto3, azure, scapy); they are
@@ -182,7 +183,14 @@ def handle_export(assets, feature, timestamp, args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Discovr - Asset Discovery Tool")
+    parser = argparse.ArgumentParser(description="Discovr - Asset Discovery Tool. "
+                                                 "Run without options to open the web interface.")
+    parser.add_argument("--version", action="version", version=f"Discovr {__version__}")
+
+    # Web interface
+    parser.add_argument("--ui", action="store_true", help="Open the web interface (default with no scan options)")
+    parser.add_argument("--port", type=int, default=0, help="Web interface port (default: random free port)")
+    parser.add_argument("--no-browser", action="store_true", help="Do not open a browser automatically")
 
     # Network
     parser.add_argument("--scan-network", help="Network range (CIDR)")
@@ -281,7 +289,11 @@ def main():
             Reporter.print_results(assets, len(assets), "passive assets")
 
         else:
-            parser.print_help()
+            # No scan requested (or --ui): start the local web interface - this is also
+            # what happens when someone double-clicks the portable binary.
+            from discovr.server import serve
+
+            serve(port=args.port, open_browser=not args.no_browser)
             return
 
     except Exception as e:

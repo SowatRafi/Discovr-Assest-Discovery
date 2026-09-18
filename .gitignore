@@ -55,6 +55,7 @@ dist/
 .claude-flow/
 .swarm/
 .claude/settings.local.json
+.claude/launch.json
 
 # Logs & Reports
 /logs

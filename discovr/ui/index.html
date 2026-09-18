@@ -1,0 +1,330 @@
+<!doctype html>
+<!--
+  Discovr web UI. Served by discovr/server.py on 127.0.0.1 with a strict CSP:
+  no inline scripts or style attributes - behaviour lives in app.js, looks in app.css.
+  Works fully offline (no CDNs, fonts or trackers).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Discovr</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <!-- Icon sprite: one consistent 24px / 2px-stroke family, referenced with <use>. -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-logo" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><circle cx="12" cy="11.5" r="3.5"/><path d="M12 11.5l2.5-2.5"/></symbol>
+    <symbol id="i-network" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l5-5"/><circle cx="12" cy="12" r="1"/></symbol>
+    <symbol id="i-passive" viewBox="0 0 24 24"><path d="M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/><circle cx="12" cy="12" r="1.5"/></symbol>
+    <symbol id="i-ad" viewBox="0 0 24 24"><path d="M4 21V4h10v17M14 9h6v12M8 8h2M8 12h2M8 16h2M3 21h18"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 19h10a4.5 4.5 0 0 0 .6-9A6 6 0 0 0 6 9.5 4.8 4.8 0 0 0 7 19z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-critical" viewBox="0 0 24 24"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M12 8v5M12 16.2v.1"/></symbol>
+    <symbol id="i-high" viewBox="0 0 24 24"><path d="M12 3.5L2.5 20h19z"/><path d="M12 10v4M12 17.2v.1"/></symbol>
+    <symbol id="i-medium" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.2v.1"/></symbol>
+    <symbol id="i-low" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></symbol>
+    <symbol id="i-agent" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3L3 8l9 5 9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.8v.1"/></symbol>
+  </svg>
+
+  <a class="skip-link" href="#assets-title">Skip to assets</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="icon brand-mark" aria-hidden="true"><use href="#i-logo"/></svg>
+      <span class="brand-name">Discovr</span>
+      <span class="brand-version" id="version"></span>
+    </div>
+    <ul class="host-facts" id="host-facts" aria-label="This computer"></ul>
+    <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch to light theme">
+      <svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg>
+    </button>
+  </header>
+
+  <div class="banner" id="offline-banner" role="alert" hidden>
+    <svg class="icon" aria-hidden="true"><use href="#i-info"/></svg>
+    Lost connection to Discovr. Is it still running in its terminal window?
+  </div>
+
+  <div class="layout">
+    <!-- ============================================================ scan controls -->
+    <aside class="side" aria-label="Scan controls">
+      <section class="panel" aria-labelledby="scan-title">
+        <h2 class="panel-title" id="scan-title">New scan</h2>
+        <form id="scan-form" novalidate>
+          <fieldset class="sources">
+            <legend class="sr-only">Discovery source</legend>
+            <label class="source"><input type="radio" name="kind" value="network" checked>
+              <svg class="icon" aria-hidden="true"><use href="#i-network"/></svg>
+              <span><b>Network</b><small>Active TCP sweep</small></span></label>
+            <label class="source"><input type="radio" name="kind" value="passive">
+              <svg class="icon" aria-hidden="true"><use href="#i-passive"/></svg>
+              <span><b>Passive</b><small>Listen only</small></span></label>
+            <label class="source"><input type="radio" name="kind" value="ad">
+              <svg class="icon" aria-hidden="true"><use href="#i-ad"/></svg>
+              <span><b>Active Directory</b><small>LDAP computers</small></span></label>
+            <label class="source"><input type="radio" name="kind" value="aws">
+              <svg class="icon" aria-hidden="true"><use href="#i-cloud"/></svg>
+              <span><b>AWS</b><small>EC2 instances</small></span></label>
+            <label class="source"><input type="radio" name="kind" value="azure">
+              <svg class="icon" aria-hidden="true"><use href="#i-cloud"/></svg>
+              <span><b>Azure</b><small>Virtual machines</small></span></label>
+            <label class="source"><input type="radio" name="kind" value="gcp">
+              <svg class="icon" aria-hidden="true"><use href="#i-cloud"/></svg>
+              <span><b>GCP</b><small>Compute Engine</small></span></label>
+          </fieldset>
+
+          <!-- One fieldset per source; inactive ones are disabled so they are neither validated nor sent. -->
+          <fieldset class="fields" data-kind="network">
+            <legend class="sr-only">Network scan options</legend>
+            <div class="field">
+              <label for="f-target">Target range</label>
+              <input id="f-target" name="target" autocomplete="off" spellcheck="false" placeholder="192.168.1.0/24" aria-describedby="h-target">
+              <p class="hint" id="h-target">CIDR, single IP, or a comma-separated list (up to a /16).</p>
+            </div>
+            <div class="field">
+              <label for="f-ports-mode">Ports</label>
+              <select id="f-ports-mode" name="portsMode">
+                <option value="smart">Smart - 44 common services</option>
+                <option value="custom">Custom list…</option>
+              </select>
+            </div>
+            <div class="field" id="custom-ports" hidden>
+              <label for="f-ports">Custom ports</label>
+              <input id="f-ports" name="ports" autocomplete="off" spellcheck="false" placeholder="22,80,443,8000-8100" aria-describedby="h-ports">
+              <p class="hint" id="h-ports">Only these ports are probed.</p>
+            </div>
+            <fieldset class="field segmented">
+              <legend>Intensity</legend>
+              <div class="segments">
+                <label><input type="radio" name="intensity" value="gentle"><span>Gentle</span></label>
+                <label><input type="radio" name="intensity" value="normal" checked><span>Normal</span></label>
+                <label><input type="radio" name="intensity" value="aggressive"><span>Aggressive</span></label>
+              </div>
+              <p class="hint" id="intensity-hint">512 probes in flight, 1 s timeout.</p>
+            </fieldset>
+            <label class="check"><input type="checkbox" name="osDetect" id="f-os-detect">
+              <span>OS fingerprinting with nmap <small id="nmap-note"></small></span></label>
+          </fieldset>
+
+          <fieldset class="fields" data-kind="passive" hidden>
+            <legend class="sr-only">Passive listening options</legend>
+            <div class="field">
+              <label for="f-iface">Interface</label>
+              <select id="f-iface" name="iface"></select>
+            </div>
+            <div class="field">
+              <label for="f-duration">Listen for (seconds)</label>
+              <input id="f-duration" name="duration" type="number" inputmode="numeric" min="10" max="3600" value="120">
+            </div>
+            <p class="hint">Sends no packets. Learns devices from ARP, DHCP, mDNS, NetBIOS, LLMNR and SSDP.</p>
+          </fieldset>
+
+          <fieldset class="fields" data-kind="ad" hidden>
+            <legend class="sr-only">Active Directory options</legend>
+            <div class="field">
+              <label for="f-domain">Domain <span class="req" aria-hidden="true">*</span></label>
+              <input id="f-domain" name="domain" autocomplete="off" spellcheck="false" placeholder="corp.local" required>
+            </div>
+            <div class="field">
+              <label for="f-username">Username <span class="req" aria-hidden="true">*</span></label>
+              <input id="f-username" name="username" autocomplete="off" spellcheck="false" placeholder="user@corp.local" required>
+            </div>
+            <div class="field">
+              <label for="f-password">Password <span class="req" aria-hidden="true">*</span></label>
+              <div class="input-with-button">
+                <input id="f-password" name="password" type="password" autocomplete="off" required>
+                <button type="button" class="icon-btn" id="toggle-password" aria-label="Show password" aria-pressed="false">
+                  <svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg>
+                </button>
+              </div>
+              <p class="hint">Sent only to the domain controller over TLS or NTLM. Never stored.</p>
+            </div>
+            <div class="field">
+              <label for="f-dc">Domain controller <small>(optional)</small></label>
+              <input id="f-dc" name="dc" autocomplete="off" spellcheck="false" placeholder="dc01.corp.local">
+            </div>
+            <label class="check"><input type="checkbox" name="ldaps"><span>Use LDAPS (port 636)</span></label>
+          </fieldset>
+
+          <fieldset class="fields" data-kind="aws" hidden>
+            <legend class="sr-only">AWS options</legend>
+            <div class="field">
+              <label for="f-profile">Profile <small>(optional)</small></label>
+              <input id="f-profile" name="profile" autocomplete="off" spellcheck="false" placeholder="Default credential chain">
+            </div>
+            <div class="field">
+              <label for="f-region">Region</label>
+              <input id="f-region" name="region" autocomplete="off" spellcheck="false" value="all" aria-describedby="h-region">
+              <p class="hint" id="h-region">"all" scans every region enabled on the account.</p>
+            </div>
+            <p class="hint">Uses <code>aws configure</code> / <code>aws sso login</code> or environment credentials.</p>
+          </fieldset>
+
+          <fieldset class="fields" data-kind="azure" hidden>
+            <legend class="sr-only">Azure options</legend>
+            <div class="field">
+              <label for="f-subscription">Subscription ID <small>(optional)</small></label>
+              <input id="f-subscription" name="subscription" autocomplete="off" spellcheck="false" placeholder="All enabled subscriptions">
+            </div>
+            <p class="hint">Uses your <code>az login</code> session, a managed identity, or AZURE_* environment variables.</p>
+          </fieldset>
+
+          <fieldset class="fields" data-kind="gcp" hidden>
+            <legend class="sr-only">GCP options</legend>
+            <div class="field">
+              <label for="f-project">Project ID <small>(optional)</small></label>
+              <input id="f-project" name="project" autocomplete="off" spellcheck="false" placeholder="From your credentials">
+            </div>
+            <div class="field">
+              <label for="f-zone">Zone <small>(optional)</small></label>
+              <input id="f-zone" name="zone" autocomplete="off" spellcheck="false" placeholder="All zones">
+            </div>
+            <div class="field">
+              <label for="f-keyfile">Service-account key file <small>(optional)</small></label>
+              <input id="f-keyfile" name="credentialsFile" autocomplete="off" spellcheck="false" placeholder="C:\keys\discovr.json">
+            </div>
+            <p class="hint">Without a key file, uses <code>gcloud auth application-default login</code>.</p>
+          </fieldset>
+
+          <p class="callout" id="kind-warning" role="note" hidden></p>
+          <p class="form-error" id="form-error" role="alert" hidden></p>
+          <button class="btn primary block" type="submit" id="start-btn">
+            <svg class="icon" aria-hidden="true"><use href="#i-play"/></svg>
+            <span id="start-label">Start network scan</span>
+          </button>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="jobs-title">
+        <h2 class="panel-title" id="jobs-title">Scans</h2>
+        <ol class="jobs" id="jobs" aria-live="polite"></ol>
+        <p class="muted" id="jobs-empty">No scans yet.</p>
+        <details class="log">
+          <summary>Activity log</summary>
+          <pre id="log" tabindex="0"></pre>
+        </details>
+      </section>
+    </aside>
+
+    <!-- ============================================================ results -->
+    <main class="main" id="main">
+      <section class="filters" aria-label="Filters">
+        <label class="search">
+          <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+          <span class="sr-only">Search assets</span>
+          <input id="search" type="search" placeholder="Search IP, hostname, OS, port, MAC… ( / )" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="risk-filter" role="group" aria-label="Risk filter" id="risk-filter"></div>
+        <label class="select-wrap"><span class="sr-only">Device type</span>
+          <select id="type-filter"><option value="">All types</option></select></label>
+        <label class="select-wrap"><span class="sr-only">Source</span>
+          <select id="source-filter"><option value="">All sources</option></select></label>
+        <label class="switch"><input type="checkbox" id="agent-only"><span>Agent-capable only</span></label>
+        <button class="btn ghost" type="button" id="reset-filters" hidden>Reset filters</button>
+      </section>
+
+      <section class="kpis" aria-label="Summary" id="kpis"></section>
+
+      <section class="insights">
+        <div class="card" aria-labelledby="risk-title">
+          <h2 class="card-title" id="risk-title">Risk breakdown</h2>
+          <ul class="bars" id="risk-bars"></ul>
+        </div>
+        <div class="card" aria-labelledby="types-title">
+          <h2 class="card-title" id="types-title">Device types</h2>
+          <ul class="bars" id="type-bars"></ul>
+        </div>
+      </section>
+
+      <section class="card table-card" aria-labelledby="assets-title">
+        <div class="table-head">
+          <h2 class="card-title" id="assets-title" tabindex="-1">Assets <span class="count" id="asset-count"></span></h2>
+          <div class="table-actions">
+            <input type="file" id="import-file" accept=".json,application/json" hidden>
+            <button class="btn ghost" type="button" id="import-btn">
+              <svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>Import JSON</button>
+            <details class="menu" id="export-menu">
+              <summary class="btn"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Export
+                <svg class="icon chevron" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+              <div class="menu-list">
+                <button type="button" data-format="csv">CSV spreadsheet</button>
+                <button type="button" data-format="json">JSON (re-importable)</button>
+                <button type="button" data-format="html">HTML report</button>
+              </div>
+            </details>
+            <button class="btn ghost danger" type="button" id="clear-btn">
+              <svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg>Clear</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="assets">
+            <caption class="sr-only">Discovered assets. Select a hostname for full details.</caption>
+            <thead><tr id="table-header"></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <div class="empty" id="empty" hidden></div>
+        <div class="more" id="more" hidden>
+          <button class="btn ghost" type="button" id="more-btn">Show more</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Asset details: a native modal dialog gives focus trapping and Escape-to-close for free. -->
+  <dialog class="drawer" id="detail" aria-labelledby="detail-title">
+    <div class="drawer-head">
+      <div>
+        <h2 id="detail-title"></h2>
+        <p class="mono muted" id="detail-sub"></p>
+      </div>
+      <button class="icon-btn" type="button" id="detail-close" aria-label="Close details">
+        <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body" id="detail-body"></div>
+    <div class="drawer-foot">
+      <button class="btn ghost" type="button" id="detail-copy">
+        <svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg>Copy as JSON</button>
+    </div>
+  </dialog>
+
+  <dialog class="confirm" id="confirm" aria-labelledby="confirm-title">
+    <form method="dialog">
+      <h2 id="confirm-title">Clear all assets?</h2>
+      <p id="confirm-text">This removes every asset from this session. Saved reports are not affected.</p>
+      <div class="confirm-actions">
+        <button class="btn ghost" value="cancel" autofocus>Cancel</button>
+        <button class="btn danger-solid" value="ok">Clear assets</button>
+      </div>
+    </form>
+  </dialog>
+
+  <section class="auth-gate" id="auth-gate" hidden>
+    <svg class="icon brand-mark" aria-hidden="true"><use href="#i-logo"/></svg>
+    <h1>Open Discovr from its link</h1>
+    <p>For your security this page needs the private session link printed in the terminal
+      where Discovr is running (it looks like <code>http://127.0.0.1:PORT/#token=…</code>).</p>
+  </section>
+
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>
