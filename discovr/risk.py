@@ -33,12 +33,14 @@ class RiskAssessor:
         os_name = str(asset.get("OS", "")).lower()
         tag = asset.get("Tag") or Tagger.assign_tag(asset)
         ports = port_set(asset.get("Ports"))
-        # Set by cloud discovery when a firewall rule allows inbound traffic from anywhere.
+        # Cloud discovery sets InternetExposed when a public IP meets a firewall rule allowing
+        # inbound traffic from anywhere; ExposedPorts lists just those ports (default: all ports).
         exposed = bool(asset.get("InternetExposed"))
+        exposed_ports = port_set(asset.get("ExposedPorts", asset.get("Ports"))) if exposed else set()
 
         if any(k in os_name for k in UNSUPPORTED_OS):
             return "Critical"
-        if exposed and ports & SENSITIVE_PORTS:
+        if exposed_ports & SENSITIVE_PORTS:
             return "Critical"  # admin, database or file-share service reachable from the internet
         if exposed or ports & CLEARTEXT_PORTS or any(k in os_name for k in ENDING_OS):
             return "High"

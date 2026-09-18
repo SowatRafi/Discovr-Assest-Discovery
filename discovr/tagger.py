@@ -41,6 +41,12 @@ def port_set(value) -> set:
     return ports
 
 
+def port_sort_key(token):
+    """Sort key for port tokens: numbers ascending, then ranges and "*" alphabetically."""
+    token = str(token)
+    return (not token.isdigit(), int(token) if token.isdigit() else 0, token)
+
+
 class Tagger:
     """Assigns a role tag such as [Workstation], [Server] or [Printer] to discovered assets."""
 

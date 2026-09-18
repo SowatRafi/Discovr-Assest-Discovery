@@ -196,9 +196,12 @@ def main():
 
     # Cloud
     parser.add_argument("--cloud", choices=["aws", "azure", "gcp"], help="Cloud provider")
-    parser.add_argument("--subscription", help="Azure subscription ID")
-    parser.add_argument("--project", help="GCP project ID")
-    parser.add_argument("--zone", help="GCP zone")
+    parser.add_argument("--profile", help="AWS profile (default: standard AWS credential chain)")
+    parser.add_argument("--region", default="all", help="AWS region, or 'all' enabled regions (default: all)")
+    parser.add_argument("--subscription", help="Azure subscription ID (default: every enabled subscription)")
+    parser.add_argument("--project", help="GCP project ID (default: from the credentials)")
+    parser.add_argument("--zone", help="GCP zone filter (default: all zones)")
+    parser.add_argument("--gcp-credentials", help="GCP service-account JSON key file (default: ADC)")
 
     # Active Directory
     parser.add_argument("--ad", action="store_true", help="Active Directory discovery")
@@ -243,19 +246,11 @@ def main():
 
             feature = "cloud"
             log_file, timestamp = Logger.setup(feature)
-            if args.cloud == "azure":
-                print(f"[+] Discovering Azure assets in subscription {args.subscription}")
-                scanner = CloudDiscovery("azure", subscription=args.subscription)
-                assets = scanner.run()
-            elif args.cloud == "gcp":
-                if not args.project or not args.zone:
-                    print("[!] GCP requires --project and --zone")
-                    sys.exit(1)
-                print(f"[+] Discovering GCP assets in project {args.project}, zone {args.zone}")
-                scanner = CloudDiscovery("gcp", project=args.project, zone=args.zone)
-                assets = scanner.run()
-            elif args.cloud == "aws":
-                print("[!] AWS discovery not yet implemented")
+            print(f"[+] Discovering {args.cloud.upper()} assets...")
+            scanner = CloudDiscovery(args.cloud, profile=args.profile, region=args.region,
+                                     subscription=args.subscription, project=args.project,
+                                     zone=args.zone, credentials_file=args.gcp_credentials)
+            assets = scanner.run()
             Reporter.print_results(assets, len(assets), "cloud assets")
 
         elif args.ad:

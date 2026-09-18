@@ -21,7 +21,7 @@ from tabulate import tabulate
 
 from discovr import __version__
 from discovr.risk import RISK_ORDER, RiskAssessor
-from discovr.tagger import Tagger
+from discovr.tagger import Tagger, port_sort_key
 
 # Columns shown first in tables and exports; provider-specific fields follow alphabetically.
 CORE_FIELDS = ["IP", "Hostname", "OS", "Ports", "Tag", "Risk", "AgentCapable", "Source", "MAC"]
@@ -130,7 +130,7 @@ def _merge_tokens(first, second) -> str:
     for value in (first, second):
         if not is_blank(value):
             tokens.update(t.strip() for t in str(value).replace(";", ",").split(",") if t.strip())
-    ordered = sorted(tokens, key=lambda t: (not t.isdigit(), int(t) if t.isdigit() else 0, t))
+    ordered = sorted(tokens, key=port_sort_key)
     return ",".join(ordered) if ordered else str(first or second or "")
 
 
