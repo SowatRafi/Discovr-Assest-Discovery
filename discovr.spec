@@ -13,6 +13,10 @@ Notes
   tool that has to run on client machines.
 """
 import re
+import runpy
+from pathlib import Path
+
+notices = runpy.run_path(str(Path(SPECPATH) / "scripts" / "build_notices.py"))["collect_notices"](SPECPATH)
 
 AWS_SERVICES = {"ec2", "sts", "ssm", "sso", "sso-oidc"}
 
@@ -27,7 +31,7 @@ a = Analysis(
     ["discovr/__main__.py"],
     pathex=[],
     binaries=[],
-    datas=[("discovr/ui", "discovr/ui")],  # the web UI is served from inside the bundle
+    datas=[("discovr/ui", "discovr/ui"), (str(notices), "discovr")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

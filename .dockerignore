@@ -2,5 +2,6 @@
 # Everything else (.venv, dist/, .git, reports) would bloat and slow the build context.
 *
 !requirements.txt
+!requirements.lock
 !discovr/
 discovr/**/__pycache__
