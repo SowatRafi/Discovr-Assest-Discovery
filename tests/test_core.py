@@ -95,6 +95,29 @@ def test_merge_matches_by_hostname_when_ip_is_unknown():
     assert len(inventory) == 1 and next(iter(inventory.values()))["OS"] == "Windows Server 2022"
 
 
+def test_merge_identity_rules():
+    inventory = {}
+    # A passive device is first seen by MAC only, later with its IP: still one machine.
+    merge_assets(inventory, [{"IP": "N/A", "MAC": "AA:BB:CC:00:00:01", "Hostname": "Unknown"}], source="Passive")
+    merge_assets(inventory, [{"IP": "10.0.0.8", "MAC": "aa:bb:cc:00:00:01", "OS": "Linux"}], source="Network")
+    # Two different devices sharing a default hostname must NOT be merged.
+    merge_assets(inventory, [{"IP": "10.0.0.20", "Hostname": "raspberrypi"},
+                             {"IP": "10.0.0.21", "Hostname": "raspberrypi"}], source="Network")
+    assert len(inventory) == 3
+    assert {a["IP"] for a in inventory.values()} == {"10.0.0.8", "10.0.0.20", "10.0.0.21"}
+
+
+def test_streaming_merge_stays_fast():
+    """The UI merges hosts one at a time; with a shared index that must stay linear."""
+    import time
+
+    inventory, index = {}, {}
+    start = time.perf_counter()
+    for i in range(5000):
+        merge_assets(inventory, [{"IP": f"10.{i // 250}.{i % 250}.1", "Ports": "22"}], "Network", index=index)
+    assert len(inventory) == 5000 and time.perf_counter() - start < 5
+
+
 def test_exporter_writes_all_formats_to_out_dir(tmp_path):
     paths = Exporter.save_results([{"IP": "1.2.3.4", "Hostname": "vm", "OS": "Linux", "Ports": "22"}],
                                   ["csv", "json", "html"], "network", "20260101_000000", out_dir=tmp_path)

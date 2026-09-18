@@ -117,11 +117,25 @@ def _short_name(asset) -> str:
 
 
 def asset_key(asset) -> str:
-    """Identity used to recognise one machine across sources: IP first, else short hostname."""
+    """Stable inventory key for a new record: IP, else MAC, else short hostname."""
+    return next((f"{kind}:{value}" for kind, value in _identities(asset)), f"id:{id(asset)}")
+
+
+def _identities(asset, for_matching=False) -> list:
+    """Ways to recognise the same machine: ("ip", ...), ("mac", ...), ("host", ...).
+
+    When matching an incoming record, the hostname is only used if it has no IP:
+    two different devices can share a name ("raspberrypi"), but an AD computer whose
+    DNS record is missing should still join the host the network scan found.
+    """
     ip = str(asset.get("IP") or "").strip()
-    if not is_blank(ip):
-        return "ip:" + ip
-    return "host:" + (_short_name(asset) or str(asset.get("Name") or asset.get("InstanceID") or id(asset)))
+    mac = str(asset.get("MAC") or "").strip().lower()
+    found = [("ip", ip)] if not is_blank(ip) else []
+    if not is_blank(mac):
+        found.append(("mac", mac))
+    if _short_name(asset) and not (for_matching and found):
+        found.append(("host", _short_name(asset)))
+    return found
 
 
 def _merge_tokens(first, second) -> str:
@@ -134,23 +148,27 @@ def _merge_tokens(first, second) -> str:
     return ",".join(ordered) if ordered else str(first or second or "")
 
 
-def merge_assets(inventory: dict, assets, source=None) -> dict:
-    """Merge newly discovered assets into ``inventory`` (asset_key -> asset) in place.
+def merge_assets(inventory: dict, assets, source=None, index=None) -> dict:
+    """Merge newly discovered assets into ``inventory`` (key -> asset) in place.
 
     The same machine is often seen by several sources - AD knows its exact OS, the
     network scan knows its open ports, the cloud API knows its instance ID. Records are
-    matched by IP, falling back to the short hostname, then each field keeps the most
-    informative value, port and source lists are unioned, and derived fields
-    (Tag/Risk/AgentCapable) are recomputed.
+    matched by IP or MAC (hostname only when the newcomer has no IP); each field keeps
+    the most informative value, port and source lists are unioned, and derived fields
+    (Tag/Risk/AgentCapable) are recomputed for the touched records only.
+
+    :param index: identity -> key lookup to reuse across calls. Long-lived callers (the
+        UI streams one host at a time) pass their own dict so each merge stays O(1).
     """
-    by_name = {_short_name(a): k for k, a in inventory.items() if _short_name(a)}
+    if index is None:
+        index = {ident: key for key, asset in inventory.items() for ident in _identities(asset)}
+    touched = set()
     for incoming in assets:
         incoming = dict(incoming)
         if source:
             incoming.setdefault("Source", source)
-        key = asset_key(incoming)
-        if key not in inventory and _short_name(incoming) in by_name:
-            key = by_name[_short_name(incoming)]
+        key = next((index[i] for i in _identities(incoming, for_matching=True) if i in index), None) \
+            or asset_key(incoming)
         current = inventory.setdefault(key, {})
         for field, value in incoming.items():
             if field in DERIVED_FIELDS:
@@ -166,9 +184,10 @@ def merge_assets(inventory: dict, assets, source=None) -> dict:
                 current[field] = value  # a real OS name beats a port-based guess
             elif field not in current:
                 current[field] = value
-        if _short_name(current):
-            by_name[_short_name(current)] = key
-    enrich(inventory.values())
+        for ident in _identities(current):
+            index[ident] = key
+        touched.add(key)
+    enrich(inventory[key] for key in touched)
     return inventory
 
 
