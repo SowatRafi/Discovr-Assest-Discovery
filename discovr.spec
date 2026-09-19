@@ -47,7 +47,7 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     # Raw packet capture is intentionally absent from the install-free USB product.
-    excludes=["tkinter", "unittest", "pydoc", "scapy", "discovr.server", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebView", "PySide6.QtQml", "PySide6.QtQuick"],
+    excludes=["tkinter", "unittest", "pydoc", "scapy", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebView", "PySide6.QtQml", "PySide6.QtQuick"],
     noarchive=False,
     optimize=1,
 )
@@ -76,3 +76,11 @@ exe = EXE(
 # All platforms load their runtime in place. The Mac packager adds a native Finder
 # launcher and places this folder in app resources, outside the framework namespace.
 folder = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="Discovr")
+
+# Optional convenience build. The USB folder remains the fast default: this variant
+# must unpack its runtime into OS temporary storage on every launch.
+if sys.platform != "darwin":
+    single = EXE(pyz, a.scripts, a.binaries, a.datas, [],
+                 name="discovr-single-windows-x64" if sys.platform == "win32" else "discovr-single-linux-x64",
+                 debug=False, strip=False, upx=False, console=False,
+                 runtime_tmpdir=None, disable_windowed_traceback=False)

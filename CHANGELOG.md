@@ -2,10 +2,18 @@
 
 ## 2.1.0 (unreleased)
 
+- Stream responding network hosts before the sweep finishes; add Quick/Standard discovery.
+- Move scan preparation and file import off the GUI thread; cache filtering and IP sort keys.
+- Preserve table selection while streaming, clear the saved indicator correctly, and show progress/warnings inline.
+- Add environment labels, CIDR filters and a separate guided offline demo with marked exports.
+- Remove the obsolete website; add an explicitly enabled local REST API for inventory integrations.
+- Build optional Windows/Linux single files alongside the faster USB folders; test both after relocation.
+- Publish a requirements matrix, illustrated guide, reproducible demo and performance measurements.
+
 - Replace browser startup with a native Qt Widgets desktop on Windows, Linux and macOS.
 - Preserve all six discovery sources, live inventory, filtering, scan warnings and cancellation.
 - Add native import/export dialogs, atomic report writes and unsaved-inventory protection on close.
-- Ship self-contained USB folders and macOS app bundles without a webview or HTTP listener.
+- Ship self-contained USB folders and macOS app bundles without a webview or default HTTP listener.
 - Remove nmap integration, raw capture and Scapy; no optional install requirements remain.
 - Load the runtime in place on every OS, with a native macOS launcher; gate startup time in CI.
 

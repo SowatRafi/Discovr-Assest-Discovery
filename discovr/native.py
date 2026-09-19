@@ -1,7 +1,7 @@
 """Native Qt Widgets desktop. Workers own discovery; only the GUI thread touches widgets.
 
-The desktop calls Session directly. It has no HTTP listener, browser, webview, HTML
-renderer or external discovery executable. Reports are ordinary user-selected files.
+The desktop calls Session directly. Normal startup opens no listener or browser.
+An optional loopback API can be enabled explicitly; it contains no website.
 """
 from datetime import datetime
 import ipaddress
@@ -11,13 +11,15 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
+import time
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, QSortFilterProxyModel, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
-    QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QSplitter,
+    QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
+    QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter,
     QStackedWidget, QTableView, QTableWidget, QTableWidgetItem, QTabWidget,
     QToolBar, QVBoxLayout, QWidget,
 )
@@ -63,6 +65,9 @@ class InventoryModel(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.assets = []
+        self.keys = []
+        self.search_text = []
+        self.ip_keys = []
         self.columns = list(CORE_FIELDS)
 
     def rowCount(self, parent=QModelIndex()):
@@ -90,22 +95,63 @@ class InventoryModel(QAbstractTableModel):
             return LABELS.get(self.columns[section], self.columns[section]) if orientation == Qt.Orientation.Horizontal else section + 1
         return None
 
-    def replace(self, assets):
-        self.beginResetModel()
-        self.assets = assets
-        self.endResetModel()
+    def replace(self, assets, keys=None):
+        keys = keys if keys is not None else list(range(len(assets)))
+        old_count = len(self.assets)
+        if keys[:old_count] != self.keys or len(keys) < old_count:
+            self.beginResetModel()
+            self.assets, self.keys = assets, keys
+            self.search_text = [self.searchable(a) for a in assets]
+            self.ip_keys = [self.ip_key(a) for a in assets]
+            self.endResetModel()
+            return
+        # Keep persistent indexes, selection and scroll position while scans stream.
+        # Cache search strings once per changed asset, rather than on every keystroke.
+        for row in range(old_count):
+            if assets[row] != self.assets[row]:
+                self.assets[row] = assets[row]
+                self.search_text[row] = self.searchable(assets[row])
+                self.ip_keys[row] = self.ip_key(assets[row])
+                self.dataChanged.emit(self.index(row, 0), self.index(row, len(self.columns) - 1))
+        if len(assets) > old_count:
+            self.beginInsertRows(QModelIndex(), old_count, len(assets) - 1)
+            self.assets.extend(assets[old_count:])
+            self.keys.extend(keys[old_count:])
+            self.search_text.extend(self.searchable(a) for a in assets[old_count:])
+            self.ip_keys.extend(self.ip_key(a) for a in assets[old_count:])
+            self.endInsertRows()
+
+    @staticmethod
+    def searchable(asset):
+        return " ".join(_cell_text(v) for v in asset.values()).casefold()
+
+    @staticmethod
+    def ip_key(asset):
+        value = str(asset.get("IP") or "")
+        try:
+            address = ipaddress.ip_address(value)
+            return (0, address.version, int(address))
+        except ValueError:
+            return (1, 0, value.casefold())
 
 
 class InventoryFilter(QSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.query = ""
+        self.subnet = None
         self.criteria = {}
         self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
     def filterAcceptsRow(self, row, parent):
         asset = self.sourceModel().assets[row]
-        if self.query and self.query not in " ".join(_cell_text(v) for v in asset.values()).casefold():
+        if self.subnet:
+            try:
+                if ipaddress.ip_address(str(asset.get("IP"))) not in self.subnet:
+                    return False
+            except ValueError:
+                return False
+        elif self.query and self.query not in self.sourceModel().search_text[row]:
             return False
         for key, value in self.criteria.items():
             if value is None:
@@ -122,23 +168,31 @@ class InventoryFilter(QSortFilterProxyModel):
         column = self.sourceModel().columns[left.column()]
         a, b = (self.sourceModel().assets[index.row()].get(column) for index in (left, right))
         if column == "IP":
-            def ip_key(value):
-                try:
-                    address = ipaddress.ip_address(str(value))
-                    return (0, address.version, int(address))
-                except ValueError:
-                    return (1, 0, str(value or "").casefold())
-            return ip_key(a) < ip_key(b)
+            keys = self.sourceModel().ip_keys
+            return keys[left.row()] < keys[right.row()]
         if column == "Risk":
             order = ["Critical", "High", "Medium", "Low"]
             return (order.index(a) if a in order else 4) < (order.index(b) if b in order else 4)
         return super().lessThan(left, right)
 
 
+class PreparationSignals(QObject):
+    finished = Signal(str, object, object)
+    imported = Signal(str, object, object)
+
+
 class MainWindow(QMainWindow):
-    def __init__(self, session=None):
+    def __init__(self, session=None, demo=False):
         super().__init__()
         self.session = session or Session()
+        self.demo = demo
+        self.demo_windows = []
+        self.integration = None
+        self._preparing = False
+        self._importing = False
+        self.preparation = PreparationSignals(self)
+        self.preparation.finished.connect(self.scan_prepared)
+        self.preparation.imported.connect(self.import_finished)
         self.version = -1
         self.saved_version = 0
         self.activity_seq = 0
@@ -155,13 +209,17 @@ class MainWindow(QMainWindow):
         self.last_folder = str(location)
         self.setWindowIcon(QIcon(str(Path(__file__).with_name("assets") / "logo.svg")))
         self.setWindowTitle(f"Discovr {__version__} — Asset discovery[*]")
-        self.resize(1280, 820)
+        available = QApplication.primaryScreen().availableGeometry()
+        self.resize(min(1280, available.width() - 40), min(820, available.height() - 60))
         self.setMinimumSize(920, 620)
+        font = self.font()
+        font.setPointSizeF(max(10, font.pointSizeF()))
+        self.setFont(font)
         self._build_actions()
         splitter = QSplitter(self)
         splitter.addWidget(self._build_forms())
         splitter.addWidget(self._build_inventory())
-        splitter.setSizes([310, 970])
+        splitter.setSizes([300, 980])
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
         self.setCentralWidget(splitter)
@@ -169,12 +227,22 @@ class MainWindow(QMainWindow):
         self.log_handler = _ActivityHandler(self.session)
         self.app_logger = logging.getLogger("discovr")
         self.previous_log_level = self.app_logger.level
-        self.app_logger.setLevel(logging.INFO)
-        self.app_logger.addHandler(self.log_handler)
+        if not demo:
+            self.app_logger.setLevel(logging.INFO)
+            self.app_logger.addHandler(self.log_handler)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(250)
         self.refresh()
+        if demo:
+            from discovr.demo import demo_assets
+            self.session.merge(demo_assets())
+            self.refresh()
+            self.saved_version = self.version
+            self.setWindowModified(False)
+            self.setWindowTitle("Discovr — DEMO · Sample inventory")
+            self.start_button.setEnabled(False)
+            self.statusBar().showMessage("DEMO · Fictional assets. Discovery is disabled; search, filters and exports work.")
 
     def _action(self, title, callback, shortcut=None):
         action = QAction(title, self)
@@ -194,16 +262,23 @@ class MainWindow(QMainWindow):
             ("Export view…", self.export_dialog, "Ctrl+E"),
         ):
             action = self._action(title, callback, shortcut)
+            if self.demo and title == "Import JSON…":
+                action.setEnabled(False)
             file_menu.addAction(action)
             toolbar.addAction(action)
         file_menu.addSeparator()
-        file_menu.addAction(self._action("Clear inventory…", self.clear_inventory))
+        clear = self._action("Clear inventory…", self.clear_inventory)
+        clear.setEnabled(not self.demo)
+        file_menu.addAction(clear)
         file_menu.addAction(self._action("Quit", self.close, QKeySequence.StandardKey.Quit))
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self._action("Find asset", lambda: self.search.setFocus(), QKeySequence.StandardKey.Find))
         view_menu.addAction(self._action("Reset filters", self.reset_filters))
+        tools_menu = self.menuBar().addMenu("&Tools")
+        tools_menu.addAction(self._action("Local API integration…", self.show_integration))
         help_menu = self.menuBar().addMenu("&Help")
         help_menu.addAction(self._action("Using Discovr", self.show_help, QKeySequence.StandardKey.HelpContents))
+        help_menu.addAction(self._action("Explore sample inventory", self.show_demo))
         help_menu.addAction(self._action("Third-party licences", self.show_licences))
         help_menu.addAction(self._action("About Discovr", self.about))
 
@@ -231,9 +306,12 @@ class MainWindow(QMainWindow):
         return edit
 
     def _build_forms(self):
+        if self.demo:
+            return self._build_demo_guide()
         container = QWidget()
         container.setMinimumWidth(270)
         layout = QVBoxLayout(container)
+        layout.setSpacing(12)
         heading = plain_label("New discovery")
         font = heading.font()
         font.setPointSize(font.pointSize() + 4)
@@ -259,14 +337,34 @@ class MainWindow(QMainWindow):
                 detect = QPushButton("Use local subnet")
                 detect.clicked.connect(self.detect_subnet)
                 form.addRow(detect)
-                f("ports", "TCP ports (optional)", placeholder="Default discovery ports; e.g. 22,80,443")
+                depth = QComboBox()
+                depth.addItem("Standard · more device details", "standard")
+                depth.addItem("Quick · common services", "quick")
+                depth.setAccessibleName("Discovery detail")
+                self.fields[kind]["depth"] = depth
+                form.addRow("Discovery detail", depth)
+                form.addRow(plain_label("Results appear as devices respond. Quick checks 10 common ports and skips extra fingerprinting."))
+                advanced = QWidget()
+                options = QFormLayout(advanced)
+                options.setContentsMargins(0, 0, 0, 0)
+                options.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+                self._field(options, kind, "ports", "TCP ports (optional)", placeholder="e.g. 22,80,443 or 8000-8010")
                 intensity = QComboBox()
                 for value in ("gentle", "normal", "aggressive"):
                     intensity.addItem(value.title(), value)
                 intensity.setCurrentIndex(1)
                 self.fields[kind]["intensity"] = intensity
-                form.addRow("Scan intensity", intensity)
-                form.addRow(plain_label("Built-in TCP discovery. OS and device types are inferred from available evidence."))
+                intensity.setAccessibleName("Scan intensity")
+                options.addRow("Scan intensity", intensity)
+                options.addRow(plain_label("Gentle reduces network load. Custom ports replace the built-in list."))
+                more = QPushButton("More scan options")
+                self.advanced_button = more
+                self.advanced_panel = advanced
+                more.setCheckable(True)
+                more.toggled.connect(advanced.setVisible)
+                form.addRow(more)
+                form.addRow(advanced)
+                advanced.hide()
             elif kind == "passive":
                 duration = QSpinBox()
                 duration.setRange(10, 3600)
@@ -311,30 +409,92 @@ class MainWindow(QMainWindow):
         self.source.currentIndexChanged.connect(self.forms.setCurrentIndex)
         self.source.currentIndexChanged.connect(lambda: self.form_error.clear())
         layout.addWidget(self.forms, 1)
+        self.environment = QLineEdit()
+        self.environment.setPlaceholderText("e.g. Client A / Production")
+        self.environment.setMaxLength(80)
+        self.environment.setAccessibleName("Environment label (optional)")
+        layout.addWidget(plain_label("Environment label (optional)"))
+        layout.addWidget(self.environment)
         self.form_error = plain_label("")
         layout.addWidget(self.form_error)
         self.start_button = QPushButton("Start discovery")
-        self.start_button.setMinimumHeight(36)
+        self.start_button.setMinimumHeight(42)
         self.start_button.clicked.connect(self.start_scan)
         layout.addWidget(self.start_button)
         layout.addWidget(plain_label("Credentials stay in memory and are cleared from the form when a scan starts."))
         return container
 
+    def _build_demo_guide(self):
+        container = QWidget()
+        container.setMinimumWidth(250)
+        layout = QVBoxLayout(container)
+        layout.setSpacing(16)
+        heading = plain_label("Explore Discovr")
+        font = heading.font()
+        font.setPointSize(font.pointSize() + 4)
+        font.setBold(True)
+        heading.setFont(font)
+        layout.addWidget(heading)
+        layout.addWidget(plain_label("10 fictional assets show an office network, directory computers and cloud servers. Your real inventory stays in its own window."))
+        for title, callback in (
+            ("Office devices · 6 assets", lambda: self.demo_filter("192.0.2.0/24")),
+            ("Production · 2 cloud servers", lambda: self.demo_filter("", "Example production")),
+            ("Show all sample assets", self.reset_filters),
+        ):
+            button = QPushButton(title)
+            button.setMinimumHeight(36)
+            button.clicked.connect(callback)
+            layout.addWidget(button)
+        layout.addWidget(plain_label("Try it\n\n1. Choose an example above.\n\n2. Select an asset and press Enter to see its evidence.\n\n3. Use Export view to save the visible rows. Every sample row is marked Demo."))
+        layout.addStretch()
+        self.start_button = QPushButton("Discovery disabled in demo")
+        self.start_button.setEnabled(False)
+        layout.addWidget(self.start_button)
+        close = QPushButton("Close sample inventory")
+        close.clicked.connect(self.close)
+        layout.addWidget(close)
+        return container
+
+    def demo_filter(self, query, environment=None):
+        self.reset_filters()
+        self.search.setText(query)
+        if environment:
+            self.filters["Environment"].setCurrentIndex(self.filters["Environment"].findData(environment))
+        self.apply_filters()
+
     def _build_inventory(self):
         container = QWidget()
         layout = QVBoxLayout(container)
+        layout.setSpacing(10)
+        if self.demo:
+            banner = plain_label("DEMO · Fictional sample inventory · No network discovery")
+            font = banner.font()
+            font.setBold(True)
+            banner.setFont(font)
+            layout.addWidget(banner)
         self.summary = plain_label("")
+        font = self.summary.font()
+        font.setPointSize(font.pointSize() + 2)
+        font.setBold(True)
+        self.summary.setFont(font)
         layout.addWidget(self.summary)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search all asset fields…")
+        self.search.setPlaceholderText("Search assets, or enter an IP range such as 10.0.0.0/24…")
         self.search.setClearButtonEnabled(True)
         self.search.setAccessibleName("Search assets")
-        self.search.textChanged.connect(self.apply_filters)
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(120)
+        self.search_timer.timeout.connect(self.apply_filters)
+        self.search.textChanged.connect(lambda: self.search_timer.start())
+        self.search.returnPressed.connect(self.apply_filters)
         layout.addWidget(self.search)
-        row = QHBoxLayout()
+        row = QGridLayout()
         self.filters = {}
-        for key, title in (("Risk", "All risks"), ("Tag", "All device types"), ("Source", "All sources"), ("AgentCapable", "Any agent capability")):
+        for index, (key, title) in enumerate((("Risk", "All risks"), ("Tag", "All device types"), ("Source", "All sources"), ("AgentCapable", "Any agent capability"), ("Environment", "All environments"))):
             combo = QComboBox()
+            combo.setMinimumContentsLength(10)
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             combo.setAccessibleName(title)
             combo.addItem(title, None)
             if key == "Risk":
@@ -345,15 +505,16 @@ class MainWindow(QMainWindow):
                 combo.addItem("Not agent capable", False)
             combo.currentIndexChanged.connect(self.apply_filters)
             self.filters[key] = combo
-            row.addWidget(combo)
+            row.addWidget(combo, index // 3, index % 3)
         reset = QPushButton("Reset")
         reset.clicked.connect(self.reset_filters)
-        row.addWidget(reset)
+        row.addWidget(reset, 1, 2)
         layout.addLayout(row)
         self.model = InventoryModel(self)
         self.proxy = InventoryFilter(self)
         self.proxy.setSourceModel(self.model)
         self.table = QTableView()
+        self.table.setAccessibleName("Discovered assets; press Enter for details")
         self.table.setModel(self.proxy)
         self.table.setSortingEnabled(True)
         self.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
@@ -371,12 +532,30 @@ class MainWindow(QMainWindow):
         self.table.activated.connect(self.show_asset)
         self.empty = plain_label("Start a discovery or import a JSON report to build your inventory.")
         layout.addWidget(self.empty)
+        self.welcome = QWidget()
+        welcome_row = QHBoxLayout(self.welcome)
+        welcome_row.setContentsMargins(0, 0, 0, 0)
+        for title, callback in (("1. Use local subnet", self.detect_subnet), ("Explore sample inventory", self.show_demo), ("Import report…", self.import_dialog)):
+            button = QPushButton(title)
+            button.clicked.connect(callback)
+            welcome_row.addWidget(button)
+        layout.addWidget(self.welcome)
         vertical = QSplitter(Qt.Orientation.Vertical)
         vertical.addWidget(self.table)
         tabs = QTabWidget()
         scans = QWidget()
         scan_layout = QVBoxLayout(scans)
+        self.scan_status = plain_label("No scans yet. Your first results will appear above.")
+        scan_layout.addWidget(self.scan_status)
+        self.progress = QProgressBar()
+        self.progress.setAccessibleName("Discovery progress")
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        self.progress.setMaximumHeight(6)
+        scan_layout.addWidget(self.progress)
         self.jobs = QTableWidget(0, 5)
+        self.jobs.currentCellChanged.connect(lambda *_: self.refresh())
         self.jobs.setHorizontalHeaderLabels(["Discovery", "Status", "Progress", "Assets", "Job ID"])
         self.jobs.setColumnHidden(4, True)
         self.jobs.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -405,6 +584,7 @@ class MainWindow(QMainWindow):
         self.activity.setMaximumBlockCount(500)
         tabs.addTab(self.activity, "Activity")
         vertical.addWidget(tabs)
+        tabs.setVisible(not self.demo)
         vertical.setSizes([430, 190])
         layout.addWidget(vertical, 1)
         layout.addWidget(plain_label("Double-click an asset for all details. Risk, OS and agent capability are estimates; unknown exposure is not evidence of isolation."))
@@ -425,23 +605,52 @@ class MainWindow(QMainWindow):
             self.last_folder = str(Path(path).parent)
 
     def start_scan(self):
+        if self.demo or self._preparing:
+            return
         kind = self.source.currentData()
-        params = {}
+        params = {"environment": self.environment.text()}
         for key, widget in self.fields[kind].items():
             params[key] = (widget.text() if isinstance(widget, QLineEdit) else
                            widget.isChecked() if isinstance(widget, QCheckBox) else
                            widget.value() if isinstance(widget, QSpinBox) else widget.currentData())
-        try:
-            job = self.session.start(kind, params)
-        except (ValueError, OSError) as exc:
-            self.form_error.setText(str(exc))
-            field = self.fields[kind].get(getattr(exc, "field", None))
-            if field is not None:
-                field.setFocus()
+        self._preparing = True
+        self.start_button.setText("Preparing discovery…")
+        self.start_button.setEnabled(False)
+        self.forms.setEnabled(False)
+        self.source.setEnabled(False)
+        self.form_error.clear()
+
+        def prepare():
+            # Provider imports and credential-file checks can touch slow disks. They
+            # belong off the GUI thread, just like scanning. Signals cross back safely.
+            try:
+                job, error = self.session.start(kind, params), None
+            except Exception as exc:
+                job, error = None, exc
+            finally:
+                params.clear()
+            self.preparation.finished.emit(kind, job, error)
+
+        threading.Thread(target=prepare, daemon=True, name="discovr-prepare").start()
+
+    def scan_prepared(self, kind, job, error):
+        self._preparing = False
+        if self.session.closed:
             return
-        finally:
-            # This temporary mapping must not retain another copy of credentials.
-            params.clear()
+        self.start_button.setText("Start discovery")
+        self.forms.setEnabled(True)
+        self.source.setEnabled(True)
+        self.refresh()
+        if error:
+            self.form_error.setText(str(error) or type(error).__name__)
+            field = self.fields[kind].get(getattr(error, "field", None))
+            if field is not None:
+                # Advanced fields are revealed before focusing a validation error.
+                if kind == "network" and field.parentWidget() is self.advanced_panel:
+                    self.advanced_button.setChecked(True)
+                field.setFocus()
+                self.forms.currentWidget().ensureWidgetVisible(field)
+            return
         for field in self.secret_fields:
             if field in self.fields[kind].values():
                 field.clear()
@@ -451,17 +660,28 @@ class MainWindow(QMainWindow):
         self.jobs.selectRow(self.jobs.rowCount() - 1)
 
     def refresh(self):
-        snapshot = self.session.snapshot(self.version, self.activity_seq)
+        # Bulk imports can hold the inventory lock. Skip one refresh rather than
+        # blocking keyboard input behind a worker; the next timer tick catches up.
+        if not self.session.lock.acquire(blocking=False):
+            return
+        try:
+            snapshot = self.session.snapshot(self.version, self.activity_seq)
+        finally:
+            self.session.lock.release()
         if snapshot["assets"] is not None:
             self.version = snapshot["version"]
-            self.model.replace(snapshot["assets"])
-            for key in ("Tag", "Source"):
+            self.proxy.setDynamicSortFilter(False)
+            self.model.replace(snapshot["assets"], snapshot["keys"])
+            self.proxy.setDynamicSortFilter(True)
+            for key in ("Tag", "Source", "Environment"):
                 combo = self.filters[key]
                 selected = combo.currentData()
                 values = set()
                 for asset in self.model.assets:
                     value = str(asset.get(key) or "")
-                    values.update(v.strip() for v in value.replace(";", ",").split(",") if v.strip())
+                    values.update(v.strip() for v in (value.replace(";", ",").split(",") if key == "Source" else [value]) if v.strip())
+                if values == {combo.itemData(i) for i in range(1, combo.count())}:
+                    continue
                 combo.blockSignals(True)
                 while combo.count() > 1:
                     combo.removeItem(1)
@@ -477,6 +697,7 @@ class MainWindow(QMainWindow):
         if signature != self._jobs_signature:
             selected = self.selected_job_id()
             self._jobs_signature = signature
+            self.jobs.blockSignals(True)
             self.jobs.setRowCount(len(jobs))
             for row, job in enumerate(jobs):
                 progress = f"{job['stage']} ({job['done']}/{job['total']})" if job["total"] else job["stage"]
@@ -487,18 +708,34 @@ class MainWindow(QMainWindow):
                     self.jobs.setItem(row, col, item)
                 if job["id"] == selected:
                     self.jobs.selectRow(row)
+            self.jobs.blockSignals(False)
         running = sum(j["status"] == "running" for j in jobs)
-        self.start_button.setEnabled(running < 4)
+        self.start_button.setEnabled(running < 4 and not self._preparing and not self.demo)
         self.stop_all_button.setEnabled(bool(running))
+        selected = next((j for j in jobs if j["id"] == self.selected_job_id()), jobs[-1] if jobs else None)
+        self.stop_button.setEnabled(bool(selected and selected["status"] == "running"))
+        if selected:
+            elapsed = (selected["finished"] or time.time()) - selected["started"]
+            attention = selected.get("error") or "; ".join(selected.get("warnings", []))
+            self.scan_status.setText(f"{selected['label']} · {selected['stage']} · {selected['found']:,} assets · {elapsed:.0f}s"
+                                     + (f"\nNeeds attention: {attention}" if attention else ""))
+            total = selected["total"]
+            self.progress.setRange(0, total or (0 if selected["status"] == "running" else 1))
+            self.progress.setValue(selected["done"] if total else 1)
         for entry in snapshot["activity"]:
             stamp = datetime.fromtimestamp(entry["time"]).strftime("%H:%M:%S")
             self.activity.appendPlainText(f"{stamp}  {entry['level'].upper()}  {entry['message']}")
             self.activity_seq = entry["seq"]
 
     def apply_filters(self, *_):
-        self.proxy.query = self.search.text().strip().casefold()
-        self.proxy.criteria = {key: combo.currentData() for key, combo in self.filters.items()}
+        self.search_timer.stop()
         self.proxy.beginFilterChange()
+        self.proxy.query = self.search.text().strip().casefold()
+        try:
+            self.proxy.subnet = ipaddress.ip_network(self.proxy.query, strict=False) if "/" in self.proxy.query else None
+        except ValueError:
+            self.proxy.subnet = None
+        self.proxy.criteria = {key: combo.currentData() for key, combo in self.filters.items()}
         self.proxy.endFilterChange()
         assets = self.visible_assets()
         capable = sum(a.get("AgentCapable") is True for a in assets)
@@ -506,11 +743,14 @@ class MainWindow(QMainWindow):
         self.summary.setText(f"{len(assets):,} of {len(self.model.assets):,} assets   ·   {capable:,} agent capable   ·   {urgent:,} high / critical")
         self.empty.setVisible(not assets)
         self.empty.setText("No assets match these filters." if self.model.assets else "Start a discovery or import a JSON report to build your inventory.")
+        self.welcome.setVisible(not self.model.assets and not self.demo)
 
     def reset_filters(self):
         self.search.clear()
         for combo in self.filters.values():
+            combo.blockSignals(True)
             combo.setCurrentIndex(0)
+            combo.blockSignals(False)
         self.apply_filters()
 
     def visible_assets(self):
@@ -562,32 +802,56 @@ class MainWindow(QMainWindow):
                                                          for key, value in asset.items()))
 
     def import_path(self, path):
-        # Bound reads before JSON parsing so a selected multi-gigabyte file cannot exhaust RAM.
-        with Path(path).open("rb") as source:
-            raw = source.read(32 * 1024 * 1024 + 1)
-        if len(raw) > 32 * 1024 * 1024:
-            raise BadRequest("Report exceeds the 32 MB import limit")
-        count = self.session.import_report(json.loads(raw))
+        count = self.read_report(path)
         self.last_folder = str(Path(path).parent)
         self.refresh()
         self.statusBar().showMessage(f"Imported {count:,} assets")
         return count
 
+    def read_report(self, path):
+        """Disk parsing and merge are safe in a worker; no widgets are touched here."""
+        # Bound reads before JSON parsing so a selected multi-gigabyte file cannot exhaust RAM.
+        with Path(path).open("rb") as source:
+            raw = source.read(32 * 1024 * 1024 + 1)
+        if len(raw) > 32 * 1024 * 1024:
+            raise BadRequest("Report exceeds the 32 MB import limit")
+        return self.session.import_report(json.loads(raw))
+
     def import_dialog(self):
+        if self._importing or self.demo:
+            return
         path, _ = QFileDialog.getOpenFileName(self, "Import Discovr report", self.last_folder, "JSON reports (*.json)")
         if path:
-            try:
-                self.import_path(path)
-            except (OSError, ValueError, RecursionError) as exc:
-                self.error("Could not import report", str(exc))
+            self._importing = True
+            self.statusBar().showMessage("Importing report… You can continue using the inventory.")
+            def load():
+                try:
+                    count, error = self.read_report(path), None
+                except Exception as exc:
+                    count, error = None, exc
+                self.preparation.imported.emit(path, count, error)
+            threading.Thread(target=load, daemon=True, name="discovr-import").start()
+
+    def import_finished(self, path, count, error):
+        self._importing = False
+        if self.session.closed:
+            return
+        if error:
+            self.error("Could not import report", str(error))
+        else:
+            self.last_folder = str(Path(path).parent)
+            self.refresh()
+            self.statusBar().showMessage(f"Imported {count:,} assets")
 
     def export_path(self, path, fmt, all_assets=False):
+        self.apply_filters()  # A click can arrive before the search debounce expires.
         snapshot = self.session.snapshot()
         assets = snapshot["assets"] if all_assets else self.visible_assets()
         write_report(path, assets, fmt)
         if all_assets and fmt == "json":
             # A worker may have merged more assets during disk I/O. Only mark this snapshot saved.
             self.saved_version = snapshot["version"]
+            self.setWindowModified(self.session.version != self.saved_version)
         self.last_folder = str(Path(path).parent)
         self.statusBar().showMessage(f"Saved {len(assets):,} assets to {Path(path).name}")
         return True
@@ -618,6 +882,9 @@ class MainWindow(QMainWindow):
         box.exec()
 
     def clear_inventory(self):
+        if self._importing:
+            self.error("Import is running", "Wait for the import to finish before clearing the inventory.")
+            return
         if self.session.snapshot(self.version)["jobs"] and self.session.cancels:
             self.error("Discovery is running", "Stop running scans before clearing the inventory.")
             return
@@ -627,14 +894,36 @@ class MainWindow(QMainWindow):
             self.session.clear()
             self.refresh()
 
+    def show_demo(self):
+        if self.demo:
+            self.reset_filters()
+            return self
+        # A separate Session makes sample exports useful without contaminating real scans.
+        demo = MainWindow(demo=True)
+        self.demo_windows.append(demo)
+        demo.show()
+        return demo
+
+    def show_integration(self):
+        if self.demo:
+            self.statusBar().showMessage("API integration is unavailable in the sample inventory.")
+            return
+        from discovr.integration import IntegrationDialog
+        if self.integration is None:
+            self.integration = IntegrationDialog(self.session, self)
+        self.integration.show()
+        self.integration.raise_()
+
     def show_help(self):
         self.text_dialog("Using Discovr", "1. Choose a discovery source, enter its details, and select Start discovery.\n\n"
                          "2. Results arrive in the inventory. Up to four scans can run together. Stop selected preserves assets already found. "
                          "Double-click a scan to inspect warnings and incomplete results.\n\n"
                          "3. Search or filter results. Double-click an asset to inspect every field.\n\n"
+                         "Enter a CIDR such as 10.0.0.0/24 in Search to group a range. Add an Environment label before discovery to group results by client or location.\n\n"
                          "4. Export view saves filtered results as CSV, JSON or HTML. Save inventory saves every asset as JSON, regardless of filters. "
                          "Import JSON merges a previous report into this session.\n\n"
                          "5. Close the app before ejecting your USB drive. Results and credentials are kept in memory; save results you want to retain.\n\n"
+                         "Help > Explore sample inventory opens fictional examples in a separate window without scanning. Tools > Local API integration enables an optional, authenticated loopback API for your integrations.\n\n"
                          "Local discovery works offline. Cloud and AD require network access and authorised credentials. "
                          "Risk and agent capability are triage estimates, not vulnerability verification. "
                          "Neighbour-cache observation is passive and cannot establish current liveness.")
@@ -655,8 +944,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if not self._allow_close:
-            if any(j["status"] == "running" for j in self.session.snapshot(self.version)["jobs"]):
-                answer = QMessageBox.question(self, "Stop discovery and quit?", "Running scans will stop. Only results already received can be saved.",
+            if self._preparing or self._importing or any(j["status"] == "running" for j in self.session.snapshot(self.version)["jobs"]):
+                answer = QMessageBox.question(self, "Stop work and quit?", "Running scans and imports will stop. Only results already received can be saved.",
                                               QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
                 if answer != QMessageBox.StandardButton.Yes:
                     event.ignore()
@@ -670,11 +959,14 @@ class MainWindow(QMainWindow):
                 if answer == QMessageBox.StandardButton.Cancel or (answer == QMessageBox.StandardButton.Save and not self.save_inventory()):
                     event.ignore()
                     return
-        self.session.stop_all()
+        self.session.close()
+        if self.integration:
+            self.integration.stop()
         for field in self.secret_fields:
             field.clear()
         self.timer.stop()
-        self.app_logger.removeHandler(self.log_handler)
-        self.app_logger.setLevel(self.previous_log_level)
+        if not self.demo:
+            self.app_logger.removeHandler(self.log_handler)
+            self.app_logger.setLevel(self.previous_log_level)
         self.log_handler.close()
         event.accept()

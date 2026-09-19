@@ -13,7 +13,8 @@ vulnerability*) instead of a public issue. Include steps to reproduce and the af
 
 | Boundary | Threat | Control |
 |---|---|---|
-| Desktop UI | Browser/API exposure and untrusted asset markup | Native Qt Widgets calls the discovery controller directly; no HTTP listener or webview. Asset values are plain text, including dialogs and errors. The historical web server is excluded from USB builds. |
+| Desktop UI | Browser/API exposure and untrusted asset markup | Native Qt Widgets calls the controller directly; normal startup has no listener or webview. Asset values are plain text. The obsolete website was removed. |
+| Optional local API | Unauthorised scans, inventory reads/writes, CSRF and DNS rebinding | Explicit enable from Tools; loopback binding only, random per-enable token in `X-Discovr-Token`, exact Host validation, no CORS, JSON-only mutations, 32 connection limit and bounded request bodies. Closing Discovr stops the listener. |
 | Untrusted reports | Script in HTML, formula injection in CSV, malformed imported identities | HTML exports escape keys and values; CSV cells and headers neutralise formula prefixes; JSON imports are bounded to 32 MB / 65,536 assets and validated before mutation. |
 | Active Directory | Password captured by sniffing or by an attacker in the middle; account lockout | A simple bind (which carries the password) only happens inside a TLS channel whose certificate and hostname **verified** (system trust store, or `--ca-file` with the domain CA); otherwise NTLM challenge-response, which never sends the password; one bind attempt per mechanism; password prompted (or `DISCOVR_AD_PASSWORD`), never logged, stored or echoed |
 | Cloud APIs | Long-lived or over-privileged credentials | Credentials supplied at runtime through native form fields or provider chains; read-only list calls; Azure pagination restricted to its HTTPS API origin; minimum permissions documented in the README |
@@ -30,6 +31,13 @@ vulnerability*) instead of a public issue. Include steps to reproduce and the af
   addresses and cloud metadata - treat them as confidential.
 - Data minimisation: AD `description` fields are not collected (admins sometimes store
   passwords there).
+- The API token grants access to the current inventory and scan controls. Copy it only to
+  trusted local integrations; it is never embedded in URLs or reports. Disabling the API
+  stops new connections; already accepted work may complete. Disabling does not cancel
+  desktop jobs. Use Stop all to cancel scans. Closing the integration dialog alone keeps
+  the API enabled until explicitly disabled or the app exits.
+- Demo inventory uses reserved addresses and fake provider IDs in a separate session.
+  Live scans and report import are disabled there; every sample row carries `Demo: true`.
 
 ## Known limitations
 

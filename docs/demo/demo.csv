@@ -1,0 +1,11 @@
+IP,Hostname,OS,Ports,Tag,Risk,AgentCapable,Source,AccountID,Cloud,Demo,DomainController,Environment,Evidence,ExposedPorts,InstanceID,InternetExposed,ProjectID,Region,SeenVia,SubscriptionID,Zone
+192.0.2.10,demo-dc.example,Windows Server 2022,"88,135,389,445,636,3389",[Server],Medium,Yes,"AD, Network",,,Yes,Yes,Example office,Fictional sample only; not a real scan or verified exposure assessment.,,,,,,,,
+192.0.2.20,demo-laptop.example,Windows 11,"135,445",[Workstation],Low,Yes,AD,,,Yes,,Example office,Fictional sample only; not a real scan or verified exposure assessment.,,,,,,,,
+192.0.2.30,demo-mac.example,macOS,"22,3283",[Workstation],Low,Yes,Network,,,Yes,,Example office,Fictional sample only; not a real scan or verified exposure assessment.,,,,,,,,
+192.0.2.40,demo-printer.example,Unknown,"80,631,9100",[Printer],High,No,Network,,,Yes,,Example office,Fictional sample only; not a real scan or verified exposure assessment.,,,,,,,,
+192.0.2.50,demo-camera.example,Embedded Linux (guessed),"80,554",[IoT],High,No,Network,,,Yes,,Example office,Fictional sample only; not a real scan or verified exposure assessment.,,,,,,,,
+192.0.2.60,demo-router.example,Cisco IOS (guessed),"22,23,80",[Network],High,No,Network,,,Yes,,Example office,Fictional sample only; not a real scan or verified exposure assessment.,,,,,,,,
+198.51.100.10,demo-web.example,Linux (Ubuntu),"22,443",[Server],High,Yes,AWS,000000000000,AWS,Yes,,Example production,Fictional sample only; not a real scan or verified exposure assessment.,"22,443",i-demo-web,Yes,,ap-southeast-2,,,
+198.51.100.20,demo-db.example,Windows Server 2019,"1433,3389",[Server],Medium,Yes,Azure,,Azure,Yes,,Example production,Fictional sample only; not a real scan or verified exposure assessment.,,demo-database,,,,,demo-subscription,
+203.0.113.10,demo-worker.example,Debian Linux,22,[Server],Medium,Yes,GCP,,GCP,Yes,,Example development,Fictional sample only; not a real scan or verified exposure assessment.,,demo-worker,No,demo-project,,,,australia-southeast1-a
+203.0.113.20,Unknown,Unknown,Unknown,[Unknown],Medium,No,Passive,,,Yes,,Example development,Fictional sample only; not a real scan or verified exposure assessment.,,,,,,OS neighbour cache (may be stale),,

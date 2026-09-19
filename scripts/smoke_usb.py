@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import struct
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -19,12 +20,16 @@ import zipfile
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("archive", type=Path)
+    parser.add_argument("--single-file", action="store_true")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="discovr-smoke-") as temporary:
         folder = Path(temporary) / "USB drive with spaces"
         folder.mkdir()
         archive = args.archive.resolve()
-        if sys.platform == "darwin":
+        if args.single_file:
+            binary = folder / archive.name
+            shutil.copy2(archive, binary)
+        elif sys.platform == "darwin":
             subprocess.run(["/usr/bin/ditto", "-x", "-k", str(archive), str(folder)], check=True)
             binary = folder / "Discovr/Discovr.app/Contents/Resources/runtime/Discovr"
         elif os.name == "nt":
@@ -79,9 +84,14 @@ def main():
                 assert startup, "Native desktop did not start"
                 elapsed = time.monotonic() - started
                 assert startup["ui"] == "native-qt-widgets" and "url" not in startup
-                assert Path(startup["runtime"]).resolve().is_relative_to(folder.resolve()), "Runtime was extracted elsewhere"
-                assert elapsed < 15, f"Desktop startup exceeded the 15-second CI budget: {elapsed:.2f}s"
-                print(f"Native desktop ready in {elapsed:.2f}s from the USB app")
+                runtime = Path(startup["runtime"]).resolve()
+                if args.single_file:
+                    assert not runtime.is_relative_to(folder.resolve()), "Single-file runtime was not isolated"
+                else:
+                    assert runtime.is_relative_to(folder.resolve()), "Runtime was extracted elsewhere"
+                budget = 45 if args.single_file else 15
+                assert elapsed < budget, f"Desktop startup exceeded the {budget}-second CI budget: {elapsed:.2f}s"
+                print(f"Native desktop ready in {elapsed:.2f}s ({'single file' if args.single_file else 'USB folder'})")
                 code = process.wait(timeout=90)
                 output.seek(0)
                 assert result_file.is_file(), f"No native acceptance result (exit {code}): {output.read()}"
@@ -93,6 +103,8 @@ def main():
                 while handoff.exists() and time.monotonic() < deadline:
                     time.sleep(0.05)
                 assert not handoff.exists(), "Private startup handoff was not cleaned up"
+                if args.single_file:
+                    assert not runtime.exists(), "Single-file temporary runtime was not cleaned up"
                 print("PASS: relocated USB folder, empty PATH, native desktop, provider diagnostics, scan, stop, search, exports, import, close")
             finally:
                 if process.poll() is None and os.name == "nt":

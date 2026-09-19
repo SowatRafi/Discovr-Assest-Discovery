@@ -29,8 +29,11 @@ one question quickly, in an unfamiliar environment, with minimal setup:
   IoT, ...), an **Agent-capable** flag and a triage **risk** rating. Cloud VMs show whether the
   AWS SSM or Azure VM agent is reporting, i.e. whether an agent can be pushed remotely.
 - **Native desktop interface** - filters, search, detail view, CSV / JSON / HTML export and JSON
-  import. Works fully offline.
-- **Secure by default** - the desktop has no HTTP listener or browser session; AD
+  import. Group by environment or search a CIDR. Explore an isolated, offline sample inventory.
+- **Responsive discovery** - results stream as hosts respond; Quick/Standard detail, background
+  preparation/import, cached search, stable row selection, visible progress and coverage warnings.
+- **Optional integration** - enable an authenticated loopback REST API from Tools; see the [API guide](docs/API.md).
+- **Secure by default** - normal startup has no HTTP listener or browser session; AD
   passwords are only sent over verified TLS (else NTLM); cloud credentials are supplied at runtime
   and stay in memory; reports neutralise CSV and HTML injection. See [SECURITY.md](SECURITY.md).
 
@@ -51,6 +54,13 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 | Linux x64 | `discovr-usb-linux-x64.tar.gz` |
 | macOS Apple silicon | `discovr-usb-macos-arm64.zip` |
 | macOS Intel | `discovr-usb-macos-x64.zip` |
+
+Prefer one file? Optional `discovr-single-windows-x64.exe` and `discovr-single-linux-x64`
+builds contain the same features. They unpack into temporary storage on each launch and
+start more slowly. The USB folder is recommended for speed. macOS already presents one `.app` item.
+
+**First time?** Follow the [illustrated usage and demo guide](docs/USER_GUIDE.md), or open
+**Help → Explore sample inventory** inside the app. Sample exports are clearly marked `Demo`.
 
 Everything Discovr needs is bundled. No Python, nmap, packet-capture driver or provider CLI
 needs installing. Keep the runtime files next to the launcher. The app loads them directly
@@ -82,7 +92,7 @@ python -m discovr --help             # command line
 ## Native desktop
 
 Double-clicking opens a Qt Widgets application with native menus, controls and file dialogs.
-It does not run a browser, embedded webview or local web server.
+It does not run a browser or embedded webview. No listener starts unless you explicitly enable the local API.
 
 - **New discovery** — choose Network, Neighbour cache, Active Directory, AWS, Azure or GCP.
   Start up to four scans together. The Scans tab shows progress and supports Stop selected / Stop all.
@@ -90,7 +100,8 @@ It does not run a browser, embedded webview or local web server.
   some regions, subscriptions or optional metadata could not be read. Cancellation preserves
   collected assets; requests already in flight may take time to finish.
 - **Inventory** — search all fields and filter by risk, device type, source or agent capability.
-  Sort columns and double-click an asset to inspect all provider fields.
+  Add an Environment label before scanning, filter that label, or search a CIDR to select an IP range.
+  Sort columns and double-click an asset to inspect all provider fields. Streaming updates preserve selection.
 - **Save inventory** — save every asset as a re-importable JSON report, regardless of filters.
 - **Export view** — save the visible results as CSV, JSON or HTML using a normal file dialog.
 - **Import JSON** — merge previous Discovr reports into the current session.
@@ -140,11 +151,16 @@ incomplete cloud/directory coverage (partial reports are still saved), `130` int
 ### Network (active)
 
 1. **Sweep** every address on 10 discovery ports. Any answer - an open port *or* an immediate
-   refusal - proves the host is up. Plain TCP connects need no raw sockets, so no admin rights.
+   refusal - proves the host is up and immediately streams a preliminary row. Plain TCP connects need no raw sockets, so no admin rights.
 2. **ARP cache** - the sweep made the OS resolve every local address, so hosts whose firewall
    drops all TCP still appear, with their MAC address.
 3. **Fingerprint** live hosts on 44 common service ports while reverse DNS runs in parallel; SSH
    banners and exposed services give an OS guess (Windows, domain controller, Ubuntu, iOS, ...).
+
+**Quick** uses the first 10 ports and DNS, skipping the extended ports and SSH banners.
+**Standard** follows all three stages. **More scan options** exposes load intensity and custom
+ports. A custom port list replaces the built-in list. `SeenVia` distinguishes TCP responses
+from potentially stale cache evidence; `DiscoveryStatus` distinguishes partial from final rows.
 
 | Intensity | Probes in flight | Timeout | Use for |
 |---|---|---|---|
@@ -174,9 +190,9 @@ enough.
 
 | Provider | Uses | Minimum permissions |
 |---|---|---|
-| AWS | Dashboard access key + secret + optional session token; existing profiles, environment variables or instance role | `ec2:DescribeRegions`, `ec2:DescribeInstances`, `ec2:DescribeSecurityGroups`, `ssm:DescribeInstanceInformation` |
-| Azure | Dashboard tenant/client ID + client secret; existing credentials or managed identity | built-in **Reader** role on the subscription(s) |
-| GCP | Dashboard service-account key-file path; existing application credentials | **Compute Viewer** (`roles/compute.viewer`) |
+| AWS | Native form access key + secret + optional session token; existing profiles, environment variables or instance role | `ec2:DescribeRegions`, `ec2:DescribeInstances`, `ec2:DescribeSecurityGroups`, `ssm:DescribeInstanceInformation` |
+| Azure | Native form tenant/client ID + client secret; existing credentials or managed identity | built-in **Reader** role on the subscription(s) |
+| GCP | Native form service-account key-file path; existing application credentials | **Compute Viewer** (`roles/compute.viewer`) |
 
 Discovr lists virtual machines across all regions / subscriptions / zones and joins their
 security groups, NSGs or firewall rules. **Ports** shows what the firewall allows,
@@ -230,18 +246,20 @@ python scripts/rebuild_macos_crypto.py       # Intel macOS: static OpenSSL; no-o
 pyinstaller --noconfirm discovr.spec         # -> dist/Discovr (all platforms)
 python scripts/package_usb.py dist/discovr-usb-windows-x64.zip
 python scripts/smoke_usb.py dist/discovr-usb-windows-x64.zip
+python scripts/smoke_usb.py dist/discovr-single-windows-x64.exe --single-file
 # Use the matching archive name above for macOS/Linux.
 docker build -t discovr .                    # CLI in a container
 ```
 
 GitHub Actions (`.github/workflows/build.yml`) tests on Windows, macOS and Linux, audits
-the locked dependencies with `pip-audit`, and builds four USB archives. Each archive is
+the locked dependencies with `pip-audit`, and builds four USB archives plus Windows/Linux single files. Each archive is
 extracted outside the repository to a path with spaces and tested with an empty PATH: provider diagnostics, real native widgets,
 loopback scan, cancellation, filtering, export/import and window shutdown. Linux GUI acceptance
 runs against Xvfb with the xcb desktop plugin; Windows and macOS use their own platform plugins. A `v*` tag prepares a **draft** release with SHA-256
 checksums for maintainer review. No public release is published automatically.
 
-See [upgrade notes](docs/UPGRADE.md) for design decisions, validation and remaining release gates.
+See [requirements coverage](docs/REQUIREMENTS.md), [upgrade notes](docs/UPGRADE.md), and
+[performance/demo evidence](docs/DEMO_RESULTS.md) for scope, decisions, measurements and remaining release gates.
 
 ```
 discovr/
@@ -250,7 +268,8 @@ discovr/
   network.py    async TCP sweep engine              passive.py neighbour-cache observation
   active_directory.py  LDAP                         aws.py / azure.py / gcp.py  cloud providers
   core.py       merge, export, reporting            tagger.py / risk.py  classification
-  server.py / ui/   historical web interface (excluded from USB builds and normal startup)
+  server.py / integration.py   optional local REST API and native opt-in dialog
+  demo.py       fictional offline examples (isolated from real sessions)
 ```
 
 ## Responsible use

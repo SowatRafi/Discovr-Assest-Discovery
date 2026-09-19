@@ -63,15 +63,19 @@ def build_scanner(kind, params):
         try:
             parse_targets(target)
         except ValueError as exc:
-            raise BadRequest(str(exc), field="target")
+            message = str(exc) if "larger than" in str(exc) else "Enter an IPv4 address or range, e.g. 192.168.1.0/24."
+            raise BadRequest(message, field="target")
         try:
             ports and parse_port_spec(ports)
         except ValueError as exc:
-            raise BadRequest(str(exc), field="ports")
+            raise BadRequest("Use TCP ports from 1 to 65535, e.g. 22,443 or 8000-8010.", field="ports") from exc
         intensity = params.get("intensity") or "normal"
         if intensity not in ("gentle", "normal", "aggressive"):
             raise BadRequest("Choose gentle, normal or aggressive", field="intensity")
-        return (NetworkDiscovery(target, ports, None, intensity),
+        depth = _text(params, "depth") or "standard"
+        if depth not in ("quick", "standard"):
+            raise BadRequest("Choose quick or standard discovery", field="depth")
+        return (NetworkDiscovery(target, ports, None, intensity, depth),
                 f"Network {target}")
     if kind == "passive":
         from discovr.passive import PassiveDiscovery
@@ -156,6 +160,7 @@ class Session:
         self.version = 0        # bumped on every inventory change; the UI polls it cheaply
         self.activity = deque(maxlen=500)
         self.seq = 0
+        self.closed = False
 
     def note(self, level, message):
         """Append one line to the activity log shown in the UI."""
@@ -185,6 +190,7 @@ class Session:
         with self.lock:
             return {"version": self.version,
                     "assets": deepcopy(list(self.inventory.values())) if previous_version != self.version else None,
+                    "keys": list(self.inventory) if previous_version != self.version else None,
                     "jobs": deepcopy(list(self.jobs.values())),
                     "activity": [dict(a) for a in self.activity if a["seq"] > since]}
 
@@ -212,14 +218,25 @@ class Session:
                 if key in booleans and value is not None and not isinstance(value, bool):
                     raise BadRequest(f"{key} must be true or false")
         clean = [{str(k)[:100]: v for k, v in a.items() if not str(k).startswith("_")} for a in raw]
-        self.merge(clean, source="Import")
+        with self.lock:
+            if self.closed:
+                raise BadRequest("This discovery session is closed")
+            self.merge(clean, source="Import")
         self.note("info", f"Imported {len(clean)} assets")
         return len(clean)
 
     def start(self, kind, params):
         """Validate, register and launch a scan in a background thread; returns the job."""
+        environment = _text(params, "environment")
+        if environment and len(environment) > 80:
+            raise BadRequest("Environment must be 80 characters or fewer", field="environment")
+        scope = _text(params, "target") if kind == "network" else None
         scanner, label = build_scanner(kind, params)
         with self.lock:
+            # SDK preparation can finish after a user closes the desktop. Never launch
+            # new discovery work once that session has been closed.
+            if self.closed:
+                raise BadRequest("This discovery session is closed")
             if sum(j["status"] == "running" for j in self.jobs.values()) >= MAX_RUNNING:
                 raise BadRequest("Too many scans running - wait for one to finish")
             finished = [key for key, old in self.jobs.items() if old["finished"] is not None]
@@ -231,7 +248,7 @@ class Session:
             job["warnings"] = []
             self.jobs[job["id"]] = job
             self.cancels[job["id"]] = threading.Event()
-        threading.Thread(target=self._run, args=(job, kind, scanner), daemon=True,
+        threading.Thread(target=self._run, args=(job, kind, scanner, environment, scope), daemon=True,
                          name=f"discovr-job-{job['id']}").start()
         return dict(job)
 
@@ -244,7 +261,12 @@ class Session:
             event.set()
             self.jobs[job_id]["stage"] = "Stopping"
 
-    def _run(self, job, kind, scanner):
+    def close(self):
+        with self.lock:
+            self.closed = True
+            self.stop_all()
+
+    def _run(self, job, kind, scanner, environment=None, scope=None):
         """Body of a scan thread: run, stream progress/assets, record the outcome."""
         cancel, seen = self.cancels[job["id"]], set()
 
@@ -253,16 +275,25 @@ class Session:
                 job.update(done=done, total=total, stage="Stopping" if cancel.is_set() else stage)
 
         def found(asset):
-            keys = self.merge([asset])
+            keys = self.merge([decorate(asset)])
             with self.lock:
                 seen.update(keys)
                 job["found"] = len(seen)
+
+        def decorate(asset):
+            # Operator labels are inventory metadata, never credentials or provider tags.
+            result = dict(asset)
+            if environment:
+                result["Environment"] = environment
+            if scope:
+                result["ScanScope"] = scope
+            return result
 
         self.note("info", f"Started {job['label']}")
         try:
             result = scanner.run(on_progress=progress, on_asset=found, cancel=cancel)
             assets = result[0] if isinstance(result, tuple) else result
-            keys = self.merge(assets)
+            keys = self.merge([decorate(asset) for asset in assets])
             with self.lock:
                 seen.update(keys)
                 warnings = list(getattr(scanner, "warnings", []))

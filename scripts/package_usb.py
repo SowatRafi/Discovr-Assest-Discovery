@@ -10,6 +10,16 @@ import tarfile
 import tempfile
 
 
+def copy_guides(folder):
+    """Keep first-use help beside the launcher, so reading it needs no internet."""
+    for name in ("USER_GUIDE.md", "REQUIREMENTS.md", "API.md"):
+        shutil.copy2(Path("docs") / name, folder / name)
+    samples = folder / "demo"
+    samples.mkdir(exist_ok=True)
+    for name in ("demo.png", "demo.csv", "demo.json"):
+        shutil.copy2(Path("docs/demo") / name, samples / name)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
@@ -40,6 +50,7 @@ def main():
             # Seal the native launcher and its resources without re-signing nested data.
             subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True)
             shutil.copy2("docs/USB-START.txt", folder / "START HERE.txt")
+            copy_guides(folder)
             shutil.copy2("build/THIRD_PARTY_NOTICES.txt", folder / "THIRD_PARTY_NOTICES.txt")
             subprocess.run(["/usr/bin/codesign", "--verify", str(app)], check=True)
             subprocess.run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent",
@@ -47,6 +58,7 @@ def main():
     else:
         folder = Path("dist/Discovr").resolve()
         shutil.copy2("docs/USB-START.txt", folder / "START HERE.txt")
+        copy_guides(folder)
         shutil.copy2("build/THIRD_PARTY_NOTICES.txt", folder / "THIRD_PARTY_NOTICES.txt")
         if sys.platform.startswith("linux"):
             with tarfile.open(output, "w:gz", dereference=True) as archive:

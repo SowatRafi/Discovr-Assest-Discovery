@@ -1,10 +1,9 @@
-"""Local web UI and REST API, served by Discovr itself - no web framework, no internet access.
+"""Optional local REST API for desktop integrations. There is no browser UI.
 
 Security model (the UI can start scans and receives AD passwords):
   * Listens on 127.0.0.1 only - nothing else on the network can connect.
-  * Every /api call must carry the per-launch random token in an X-Discovr-Token header.
-    The token reaches the browser in the URL *fragment*, which browsers never send to a
-    server or leak through Referer headers.
+  * Every /api call must carry the per-enable random token in an X-Discovr-Token header.
+    Only the native integration dialog reveals the token; it is never part of a URL.
   * Requiring that custom header (and a JSON body) also defeats CSRF: other websites
     cannot add it without a CORS preflight, and this server never sends CORS headers.
   * The Host header must be 127.0.0.1/localhost, which blocks DNS-rebinding attacks.
@@ -12,34 +11,20 @@ Security model (the UI can start scans and receives AD passwords):
   * Credentials are used for the scan in memory and never stored, logged or returned.
 """
 import hmac
-import importlib.util
+from copy import deepcopy
 import json
 import logging
-import platform
 import re
 import secrets
-import socket
 import threading
-import time
-import uuid
-import webbrowser
-from collections import deque
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from discovr import __version__
-from discovr.core import is_elevated, merge_assets, to_csv, to_html, to_json
-from discovr.scan import ScanCancelled
+from discovr.core import to_csv, to_html, to_json
 
 log = logging.getLogger(__name__)
 
-UI_DIR = Path(__file__).with_name("ui")
-STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
-          "/app.css": ("app.css", "text/css; charset=utf-8"),
-          "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-          "/favicon.svg": ("favicon.svg", "image/svg+xml")}
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 MAX_BODY = 32 * 1024 * 1024      # large enough to import big JSON reports
@@ -49,11 +34,11 @@ EXPORTS = {"csv": (to_csv, "text/csv; charset=utf-8"),
            "html": (to_html, "text/html; charset=utf-8")}
 
 
-from discovr.session import BadRequest, Session, build_scanner, host_info, _ActivityHandler
+from discovr.session import BadRequest, Session, host_info
 
 
 class Handler(BaseHTTPRequestHandler):
-    """Routes static UI files and the JSON API; every response carries security headers."""
+    """Routes the JSON API; every response carries security headers."""
 
     server_version = "Discovr"   # do not advertise the Python version
     sys_version = ""
@@ -132,12 +117,14 @@ class Handler(BaseHTTPRequestHandler):
         """Drain the body, check Host and token, then route; errors become JSON responses."""
         try:
             self._raw = self._read_body()
+            if not self.server.accepting:
+                # Existing keep-alive clients must lose access too when the owner
+                # disables the API, not merely clients making a new TCP connection.
+                self.close_connection = True
+                return self._send(503, {"error": "Local API has been disabled"})
             if self.headers.get("Host", "") not in self.server.allowed_hosts:
                 return self._send(403, {"error": "Unexpected Host header"})  # DNS rebinding guard
             url = urlsplit(self.path)
-            if method == "GET" and url.path in STATIC:
-                name, content_type = STATIC[url.path]
-                return self._send(200, body=self.server.static[name], content_type=content_type)
             if not url.path.startswith("/api/"):
                 return self._send(404, {"error": "Not found"})
             token = self.headers.get("X-Discovr-Token", "")
@@ -155,10 +142,9 @@ class Handler(BaseHTTPRequestHandler):
         """The REST API (also usable by scripts and integrations with the session token)."""
         session = self.server.session
         if method == "POST" and path == "/api/shutdown":
+            self.server.accepting = False
             self._send(202, {"ok": True})
-            with session.lock:
-                for event in session.cancels.values():
-                    event.set()
+            # Disabling an integration must not cancel the native desktop's jobs.
             # shutdown must run outside the serve_forever thread to avoid deadlock.
             threading.Thread(target=self.server.shutdown, daemon=True).start()
             return
@@ -170,13 +156,16 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 raise BadRequest("since must be an integer")
             with session.lock:
-                return self._send(200, {"version": session.version, "count": len(session.inventory),
-                                        "jobs": list(session.jobs.values()),
-                                        "activity": [a for a in session.activity if a["seq"] > since]})
+                payload = {"version": session.version, "count": len(session.inventory),
+                           "jobs": deepcopy(list(session.jobs.values())),
+                           "activity": [dict(a) for a in session.activity if a["seq"] > since]}
+            # A slow integration client must never hold the inventory lock during I/O.
+            return self._send(200, payload)
         if method == "GET" and path == "/api/assets":
             with session.lock:
-                assets = [{**asset, "_id": key} for key, asset in session.inventory.items()]
-                return self._send(200, {"version": session.version, "assets": assets})
+                assets = [{**deepcopy(asset), "_id": key} for key, asset in session.inventory.items()]
+                payload = {"version": session.version, "assets": assets}
+            return self._send(200, payload)
         if method == "DELETE" and path == "/api/assets":
             session.clear()
             return self._send(200, {"ok": True})
@@ -235,42 +224,13 @@ class LocalHTTPServer(ThreadingHTTPServer):
             self.slots.release()
 
 
-def create_server(port=0):
-    """Build (but do not start) the UI server on 127.0.0.1; returns (server, url)."""
+def create_server(port=0, session=None):
+    """Build an API on 127.0.0.1; desktop opt-in supplies its existing Session."""
     server = LocalHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     actual = server.server_address[1]
     server.token = secrets.token_urlsafe(24)
-    server.session = Session()
+    server.accepting = True
+    server.session = session if session is not None else Session()
     server.allowed_hosts = {f"127.0.0.1:{actual}", f"localhost:{actual}"}
-    server.static = {name: (UI_DIR / name).read_bytes() for name, _ in STATIC.values()}
-    return server, f"http://127.0.0.1:{actual}/#token={server.token}"
-
-
-def serve(port=0, open_browser=True, on_ready=None, browser_opener=None):
-    """Run until Quit or Ctrl+C; on_ready supplies the launcher with the private URL."""
-    server, url = create_server(port)
-    app_log = logging.getLogger("discovr")
-    app_log.setLevel(logging.INFO)
-    activity_handler = _ActivityHandler(server.session)
-    app_log.addHandler(activity_handler)
-
-    # flush: when stdout is a pipe (launchers, services) Python would otherwise hold the URL back.
-    print(f"\n  Discovr {__version__} is running at:\n\n    {url}\n", flush=True)
-    print("  This link contains a private session token - do not share it.", flush=True)
-    print("  Press Ctrl+C to stop.\n", flush=True)
-    try:
-        if on_ready:
-            on_ready(url)
-        if open_browser and not (browser_opener or webbrowser.open)(url, new=2):
-            raise OSError("No default browser could be opened. Set a default browser in your computer's settings.")
-        server.serve_forever(poll_interval=0.5)
-    except KeyboardInterrupt:
-        print("\n[+] Discovr stopped.")
-    finally:
-        with server.session.lock:
-            for event in server.session.cancels.values():
-                event.set()  # stop running scans so the process can exit promptly
-        server.server_close()
-        app_log.removeHandler(activity_handler)
-        activity_handler.close()
+    return server, f"http://127.0.0.1:{actual}"

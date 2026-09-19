@@ -64,9 +64,11 @@ jobs:
         include:
           - os: windows-latest
             asset: discovr-usb-windows-x64.zip
+            single: discovr-single-windows-x64.exe
           # Oldest supported runner = oldest glibc = widest Linux compatibility.
           - os: ubuntu-22.04
             asset: discovr-usb-linux-x64.tar.gz
+            single: discovr-single-linux-x64
           - os: macos-14
             asset: discovr-usb-macos-arm64.zip
           - os: macos-15-intel
@@ -99,10 +101,18 @@ jobs:
       - name: Smoke test the native Linux desktop
         if: runner.os == 'Linux'
         run: xvfb-run -a python scripts/smoke_usb.py dist/${{ matrix.asset }}
+      - name: Smoke test optional Windows single file
+        if: runner.os == 'Windows'
+        run: python scripts/smoke_usb.py dist/${{ matrix.single }} --single-file
+      - name: Smoke test optional Linux single file
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python scripts/smoke_usb.py dist/${{ matrix.single }} --single-file
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: dist/${{ matrix.asset }}
+          path: |
+            dist/${{ matrix.asset }}
+            dist/discovr-single-*
           if-no-files-found: error
 
   release:

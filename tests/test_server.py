@@ -1,4 +1,4 @@
-"""Tests for the local web UI server (discovr.server): security guards and the scan API."""
+"""Tests for the optional local API: authentication, request guards and discovery."""
 import http.client
 import json
 import socket
@@ -39,10 +39,10 @@ def request(port, method, path, token=None, body=None, host=None, content_type="
     return resp.status, resp, json.loads(raw) if is_json else raw.decode()
 
 
-def test_static_ui_has_strict_security_headers(ui):
+def test_api_has_no_website_and_uses_security_headers(ui):
     port, _ = ui
     status, resp, page = request(port, "GET", "/")
-    assert status == 200 and "<title>Discovr</title>" in page
+    assert status == 404 and page["error"] == "Not found"
     assert "script-src 'self'" in resp.getheader("Content-Security-Policy")
     assert resp.getheader("X-Content-Type-Options") == "nosniff"
     assert resp.getheader("Server").startswith("Discovr")          # no Python version banner

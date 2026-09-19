@@ -48,7 +48,7 @@ def run_native(args, on_ready):
     app = QApplication.instance() or QApplication(["Discovr"])
     app.setApplicationName("Discovr")
     app.setOrganizationName("Discovr")
-    window = MainWindow()
+    window = MainWindow(demo=args.demo)
     if args.import_file:
         window.import_path(args.import_file)
     window.show()
@@ -70,6 +70,7 @@ def main(argv=None):
     parser.add_argument("--self-test", type=Path,
                         default=os.environ.get("DISCOVR_TEST_RESULT_FILE"), help=argparse.SUPPRESS)
     parser.add_argument("--import-file", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--demo", action="store_true", help="Explore fictional sample inventory without scanning")
     args = parser.parse_args(argv)
     ready_written = False
 

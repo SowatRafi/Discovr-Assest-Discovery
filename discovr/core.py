@@ -217,7 +217,8 @@ def merge_assets(inventory: dict, assets, source=None, index=None, keys=None) ->
                     and "guessed" not in str(value).lower():
                 current[field] = value  # a real OS name beats a port-based guess
             elif same_source and (not is_blank(value) or incoming.get("Cloud")) and not (
-                    field == "OS" and (is_blank(value) or "guessed" in str(value).lower())):
+                    field == "OS" and (is_blank(value) or ("guessed" in str(value).lower()
+                                      and "guessed" not in str(current.get("OS", "")).lower()))):
                 current[field] = value  # repeat scans must refresh power state, exposure and IPs
             elif field not in current:
                 current[field] = value

@@ -83,3 +83,37 @@ def test_cancel_stops_before_probing():
 def test_rejects_bad_intensity():
     with pytest.raises(ValueError):
         NetworkDiscovery("127.0.0.1", intensity="ludicrous")
+
+
+def test_first_host_streams_before_silent_host_finishes(monkeypatch):
+    import asyncio
+    async def run():
+        shown = asyncio.Event()
+        async def probe(ip, port, timeout):
+            if ip.endswith(".1"):
+                return True
+            # The former sweep-wide buffering deadlocks here until the test fails.
+            await asyncio.wait_for(shown.wait(), 1)
+            return None
+        monkeypatch.setattr("discovr.network.probe", probe)
+        monkeypatch.setattr("discovr.network.read_arp_cache", lambda: {})
+        monkeypatch.setattr("discovr.network.socket.gethostbyaddr", lambda ip: ("example", [], []))
+        rows = await NetworkDiscovery("192.0.2.1,192.0.2.2", ports="443")._scan(
+            lambda *a: None, lambda asset: shown.set(), None)
+        assert len(rows) == 1 and rows[0]["SeenVia"] == "TCP response"
+    asyncio.run(run())
+
+
+def test_quick_profile_skips_extra_ports_and_banners(monkeypatch):
+    seen = []
+    async def probe(ip, port, timeout):
+        seen.append(port)
+        return port == 22
+    async def banner(*args):
+        pytest.fail("Quick scan attempted SSH fingerprinting")
+    monkeypatch.setattr("discovr.network.probe", probe)
+    monkeypatch.setattr("discovr.network.ssh_banner", banner)
+    monkeypatch.setattr("discovr.network.read_arp_cache", lambda: {})
+    monkeypatch.setattr("discovr.network.socket.gethostbyaddr", lambda ip: ("example", [], []))
+    rows, _, _ = NetworkDiscovery("192.0.2.1", depth="quick").run()
+    assert len(seen) == 10 and rows[0]["ScanDepth"] == "quick"

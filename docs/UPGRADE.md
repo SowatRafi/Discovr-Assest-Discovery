@@ -22,8 +22,9 @@ by the host. The application cannot bypass them. See [USB instructions](USB-STAR
 ## Native desktop packaging
 
 Qt Widgets, its platform plugins and Python are bundled in place. Only PySide6 Essentials
-is used; Qt WebEngine, WebView, QML and Quick are excluded. The historical web server remains
-in the source tree for compatibility tests, but is excluded from USB builds and normal startup.
+is used; Qt WebEngine, WebView, QML and Quick are excluded. The historical website is removed.
+The optional API module loads only when Tools → Local API integration is opened, and binds
+only after Enable is selected. Normal startup opens no listening socket.
 Linux bundles discovered desktop support libraries; a standard glibc/X11 or Wayland desktop
 with permission to execute from the drive is required. Builds use Ubuntu 22.04 as the baseline.
 Windows and macOS are tested using their native platform plugins.
@@ -43,12 +44,22 @@ The runtime remains dynamically linked; source and replacement instructions acco
   cannot hold the application open. SSH banner concurrency is bounded too.
 - nmap, raw packet capture and Scapy are removed. Every exposed mode works without installing tools.
 - Passive discovery watches the OS neighbour cache. Windows uses its built-in ARP reader without flashing a console.
-- A native Qt Widgets window replaces browser startup. No HTTP listener or webview is included in the USB app.
+- A native Qt Widgets window replaces browser startup. No browser, webview or default listener is used.
 - Closing the window stops the process and offers to save unsaved inventory. Save inventory includes filtered-out assets.
 - AWS/Azure credentials can be supplied through native desktop fields without installing provider CLIs.
 - Invalid API payloads fail before modifying inventory. API connections and scan history are bounded.
 - Runtime dependencies are pinned with hashes and audited. Platform builds exercise the packaged
   application after relocation and with an empty PATH.
+
+The later usability pass adds progressive scan options, early streamed results, background
+preparation/import, cached search/sort, stable selection, environment labels and CIDR filtering.
+An isolated demo provides a safe first-use walkthrough. The UI UX Pro Max skill informed
+accessibility, error recovery and progress feedback; its website patterns and remote font
+suggestions were not applicable to a native offline desktop.
+
+Optional Windows/Linux single files are built from the same application and dependencies.
+They extract a temporary runtime on each launch, unlike the recommended fast USB folder.
+This preserves the brief's single-executable option without imposing its startup cost on everyone.
 
 ## Validation boundaries
 

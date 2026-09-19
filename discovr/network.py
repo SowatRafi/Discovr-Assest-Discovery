@@ -242,7 +242,7 @@ def guess_os(ports: set, banner: str = "") -> str:
 class NetworkDiscovery:
     """Discovers live hosts in one or more IPv4 ranges; see the module docstring for phases."""
 
-    def __init__(self, network_range, ports=None, parallel=None, intensity="normal"):
+    def __init__(self, network_range, ports=None, parallel=None, intensity="normal", depth="standard"):
         """Validate inputs up front so bad ranges or ports fail before any packet is sent.
 
         :param network_range: CIDR, IP, or comma-separated list of them
@@ -252,6 +252,9 @@ class NetworkDiscovery:
         """
         if intensity not in INTENSITY:
             raise ValueError(f"intensity must be one of {', '.join(INTENSITY)}")
+        if depth not in ("quick", "standard"):
+            raise ValueError("depth must be quick or standard")
+        self.depth = depth
         self.hosts = parse_targets(network_range)
         self.ports = parse_port_spec(ports) if ports else None
         self.intensity = intensity
@@ -295,6 +298,19 @@ class NetworkDiscovery:
     async def _scan(self, progress, emit, cancel):
         """The four scan phases; returns the final asset list."""
         alive, open_ports, macs = set(), defaultdict(set), {}
+        last_emit = {}
+
+        def partial(ip):
+            # Never wait for a silent address to time out before showing a responsive one.
+            # Limit updates per host while its ports are still being probed.
+            now = time.monotonic()
+            if now - last_emit.get(ip, -1) >= 0.2:
+                last_emit[ip] = now
+                emit({"IP": ip, "Hostname": "Unknown", "OS": guess_os(open_ports[ip]),
+                      "MAC": macs.get(ip, "N/A"), "Source": "Network",
+                      "SeenVia": "TCP response",
+                      "Ports": ",".join(map(str, sorted(open_ports[ip]))) or "None",
+                      "DiscoveryStatus": "Scanning", "ScanDepth": self.depth})
 
         def record(ip, port, state):
             """Store one probe result: any answer (open or refused) proves the host is up."""
@@ -302,6 +318,7 @@ class NetworkDiscovery:
                 alive.add(ip)
                 if state:
                     open_ports[ip].add(port)
+                partial(ip)
 
         # Phase 1: sweep all addresses (or the user's explicit port list).
         first = self.ports or SWEEP_PORTS
@@ -320,18 +337,19 @@ class NetworkDiscovery:
         live = sorted(alive, key=_ip_key)
         for ip in live:  # early, partial rows so the UI fills up immediately
             emit({"IP": ip, "Hostname": "Unknown", "OS": "Unknown", "MAC": macs.get(ip, "N/A"),
-                  "Ports": ",".join(map(str, sorted(open_ports[ip]))) or "None", "Source": "Network"})
+                  "Ports": ",".join(map(str, sorted(open_ports[ip]))) or "None", "Source": "Network",
+                  "DiscoveryStatus": "Scanning", "ScanDepth": self.depth})
 
         # Phase 3: extended ports on live hosts, with name lookups running alongside.
         names = asyncio.create_task(lookup_many(live, lambda ip: socket.gethostbyaddr(ip)[0], "Unknown", cancel))
-        if not self.ports and live and not (cancel is not None and cancel.is_set()):
+        if self.depth == "standard" and not self.ports and live and not (cancel is not None and cancel.is_set()):
             extra = [p for p in TOP_PORTS if p not in SWEEP_PORTS]
             await self._probe_many(((h, p) for h in live for p in extra), len(live) * len(extra),
                                    f"Fingerprinting {len(live)} live hosts", record, progress, cancel)
         progress(0, 0, "Resolving names")
         hostnames = dict(zip(live, await names))
         banners = {}
-        ssh_hosts = iter(ip for ip in live if 22 in open_ports[ip])
+        ssh_hosts = iter(ip for ip in live if 22 in open_ports[ip] and self.depth == "standard")
 
         async def read_banners():
             for ip in ssh_hosts:
@@ -352,6 +370,9 @@ class NetworkDiscovery:
                 "Ports": ",".join(map(str, sorted(ports))) or "None",
                 "MAC": macs.get(ip, "N/A"),
                 "Source": "Network",
+                "ScanDepth": self.depth,
+                "SeenVia": "TCP response" if ip in last_emit else "OS neighbour cache (may be stale)",
+                "DiscoveryStatus": "Stopped early" if cancel is not None and cancel.is_set() else "Finished",
             }
             if banners.get(ip):
                 asset["SSHBanner"] = banners[ip]

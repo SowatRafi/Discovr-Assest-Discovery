@@ -18,6 +18,17 @@ def risk(**fields):
     return enrich([fields])[0]["Risk"]
 
 
+def test_new_port_evidence_refines_guesses_but_preserves_directory_os():
+    inventory = {}
+    def update(os_name, source="Network"):
+        merge_assets(inventory, [{"IP": "192.0.2.1", "OS": os_name, "Source": source}])
+        return next(iter(inventory.values()))["OS"]
+    update("Linux/Unix (guessed)")
+    assert update("Windows (guessed)") == "Windows (guessed)"
+    assert update("Windows Server 2022", "AD") == "Windows Server 2022"
+    assert update("Linux/Unix (guessed)") == "Windows Server 2022"
+
+
 def test_port_set_parses_numbers_not_substrings():
     assert port_set("22,80,443") == {22, 80, 443}
     assert 80 not in port_set("8080")          # old code: "80" in "8080" -> True

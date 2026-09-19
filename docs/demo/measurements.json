@@ -1,0 +1,17 @@
+{
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.13.14",
+  "note": "Local SSD/development measurements. Sample inventory is fictional. Network test is real loopback only.",
+  "loopback": {
+    "first_result_ms": 1.91,
+    "complete_ms": 47.34,
+    "assets": 1,
+    "open_port": 1052,
+    "port_detected": true
+  },
+  "inventory_10000": {
+    "load_ms": 1003.25,
+    "filter_ms": 11.65,
+    "matches": 1
+  }
+}

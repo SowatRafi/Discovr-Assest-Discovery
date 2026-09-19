@@ -17,3 +17,8 @@ compatible modified builds, or rebuild Discovr from its MIT-licensed source usin
 your modified Qt/PySide6 installation and the checked-in PyInstaller recipe.
 Keep architecture, Python ABI, Qt/PySide versions and plugin versions compatible.
 Discovr does not prohibit reverse engineering for debugging such modifications.
+
+Optional Windows/Linux single-file builds contain these same dynamic libraries.
+To use modified libraries with a single-file build, rebuild from Discovr's source
+with your compatible modified Qt/PySide6 environment using discovr.spec. The fast
+USB folder is also available when direct in-place library replacement is preferred.
