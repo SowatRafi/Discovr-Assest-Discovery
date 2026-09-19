@@ -8,7 +8,9 @@ macOS: use the matching Mac download and double-click Discovr.app.
 Discovr opens its own native desktop window. No browser or website is used.
 No Python, nmap, capture driver, provider CLI, installer or command is required.
 Choose a discovery source, enter its details, and click Start discovery.
-For Network, click Use local subnet first, review the range, then Start discovery.
+Your local IP and connection appear automatically under This computer / local IPv4.
+Review the prepared subnet or choose another connection, then Start discovery.
+Use local subnet refreshes the IP/range after changing networks. No scan starts on launch.
 Standard adds device details. Quick checks common services with less work.
 More scan options contains intensity and custom ports. Stop keeps results found.
 AD and cloud sources need your own authorised credentials.

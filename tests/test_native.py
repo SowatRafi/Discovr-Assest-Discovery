@@ -105,11 +105,19 @@ def app():
     return QApplication.instance() or QApplication(["Discovr tests"])
 
 
+LOCAL_CONNECTIONS = {"connections": [
+    {"ip": "192.0.2.8", "interface": "Example Wi-Fi", "subnet": "192.0.2.0/24", "netmask_known": True, "default": True},
+    {"ip": "198.51.100.4", "interface": "Example VPN", "subnet": "198.51.100.0/24", "netmask_known": True, "default": False},
+], "selected": 0}
+
+
 @pytest.fixture
-def window(app):
+def window(app, monkeypatch):
+    monkeypatch.setattr("discovr.network.local_network_info", lambda: LOCAL_CONNECTIONS)
     widget = MainWindow()
     widget.show()
     app.processEvents()
+    pump(lambda: not widget._detecting_network)
     yield widget
     widget._allow_close = True
     widget.close()
@@ -124,6 +132,82 @@ def pump(predicate, timeout=5):
             return
         QTest.qWait(10)
     pytest.fail("Desktop operation timed out")
+
+
+def test_startup_displays_own_ip_and_subnet_without_scanning(window):
+    assert window.local_connection.currentText() == "192.0.2.8 · Example Wi-Fi"
+    assert window.fields["network"]["target"].text() == "192.0.2.0/24"
+    assert not window.session.jobs and not window.session.inventory
+    window.local_connection.setCurrentIndex(2)
+    assert window.fields["network"]["target"].text() == "198.51.100.0/24"
+    assert not window.session.jobs
+
+
+@pytest.mark.parametrize("close_early", [False, True])
+def test_slow_local_ip_detection_preserves_input_and_close(app, monkeypatch, close_early):
+    import threading
+    entered, release = threading.Event(), threading.Event()
+    def detect():
+        entered.set()
+        release.wait(3)
+        return LOCAL_CONNECTIONS
+    monkeypatch.setattr("discovr.network.local_network_info", detect)
+    widget = MainWindow()
+    widget.show()
+    try:
+        pump(entered.is_set)
+        QTest.keyClicks(widget.fields["network"]["target"], "203.0.113.9")
+        assert widget._detecting_network and widget.start_button.isEnabled()
+        if close_early:
+            widget._allow_close = True
+            widget.close()
+        release.set()
+        pump(lambda: not widget._detecting_network)
+        assert widget.fields["network"]["target"].text() == "203.0.113.9"
+        assert not widget.session.jobs and not widget.session.inventory
+    finally:
+        release.set()
+        widget._allow_close = True
+        widget.close()
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_local_ip_refresh_handles_offline_and_read_failure(window, monkeypatch, failed):
+    def offline():
+        if failed:
+            raise OSError("Local interface access failed")
+        return {"connections": [], "selected": None}
+    monkeypatch.setattr("discovr.network.local_network_info", offline)
+    window.detect_subnet()
+    pump(lambda: not window._detecting_network)
+    assert window.local_connection.currentText() == "No local IPv4 detected"
+    assert not window.local_connection.isEnabled() and window.detect_button.isEnabled()
+    assert "enter a target manually" in window.local_network_status.text()
+    assert window.fields["network"]["target"].text() == "192.0.2.0/24"
+    monkeypatch.setattr("discovr.network.local_network_info", lambda: LOCAL_CONNECTIONS)
+    window.detect_subnet()
+    pump(lambda: not window._detecting_network)
+    assert window.local_connection.isEnabled()
+
+
+def test_ambiguous_connections_need_choice_and_demo_reads_no_host(app, window, monkeypatch):
+    window.fields["network"]["target"].clear()
+    monkeypatch.setattr("discovr.network.local_network_info", lambda: {**LOCAL_CONNECTIONS, "selected": None})
+    window.detect_subnet()
+    pump(lambda: not window._detecting_network)
+    assert window.local_connection.currentData() is None
+    assert not window.fields["network"]["target"].text()
+    window.local_connection.setCurrentIndex(1)
+    assert window.fields["network"]["target"].text() == "192.0.2.0/24"
+    calls = []
+    monkeypatch.setattr("discovr.network.local_network_info", lambda: calls.append(True))
+    demo = window.show_demo()
+    try:
+        app.processEvents()
+        assert not calls and not hasattr(demo, "local_connection")
+    finally:
+        demo._allow_close = True
+        demo.close()
 
 
 def test_form_validation_and_secret_clearing(window, monkeypatch):

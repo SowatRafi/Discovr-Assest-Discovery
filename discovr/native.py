@@ -201,6 +201,7 @@ class InventoryFilter(QSortFilterProxyModel):
 class PreparationSignals(QObject):
     finished = Signal(str, object, object)
     imported = Signal(str, object, object)
+    network_detected = Signal(object, object, int, bool)
 
 
 class MainWindow(QMainWindow):
@@ -212,9 +213,12 @@ class MainWindow(QMainWindow):
         self.integration = None
         self._preparing = False
         self._importing = False
+        self._detecting_network = False
+        self._target_revision = 0
         self.preparation = PreparationSignals(self)
         self.preparation.finished.connect(self.scan_prepared)
         self.preparation.imported.connect(self.import_finished)
+        self.preparation.network_detected.connect(self.network_detected)
         self.version = -1
         self.saved_version = 0
         self.activity_seq = 0
@@ -265,6 +269,9 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("Discovr — DEMO · Sample inventory")
             self.start_button.setEnabled(False)
             self.statusBar().showMessage("DEMO · Fictional assets. Discovery is disabled; search, filters and exports work.")
+        else:
+            # Let the window paint first; local interface reads belong off the GUI thread.
+            QTimer.singleShot(0, lambda: self.detect_subnet(initial=True))
 
     def _action(self, title, callback, shortcut=None):
         action = QAction(title, self)
@@ -355,10 +362,22 @@ class MainWindow(QMainWindow):
             form.setContentsMargins(0, 8, 0, 8)
             f = lambda key, label, **kwargs: self._field(form, kind, key, label, **kwargs)
             if kind == "network":
-                f("target", "Target range", placeholder="192.168.1.0/24 or a host IP")
-                detect = QPushButton("Use local subnet")
-                detect.clicked.connect(self.detect_subnet)
-                form.addRow(detect)
+                self.local_connection = QComboBox()
+                self.local_connection.setAccessibleName("This computer's local IPv4 connection")
+                self.local_connection.setToolTip("Local IPv4 addresses on this computer, not its public internet address. Choose a connection to use its subnet.")
+                self.local_connection.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+                self.local_connection.setMinimumContentsLength(16)
+                self.local_connection.addItem("Detecting local IP…")
+                self.local_connection.setEnabled(False)
+                self.local_connection.currentIndexChanged.connect(self.local_connection_selected)
+                form.addRow("This computer · local IPv4", self.local_connection)
+                self.local_network_status = plain_label("Reading this computer's connections…")
+                form.addRow(self.local_network_status)
+                target = f("target", "Target range", placeholder="192.168.1.0/24 or a host IP")
+                target.textChanged.connect(self.target_changed)
+                self.detect_button = QPushButton("Use local subnet")
+                self.detect_button.clicked.connect(self.detect_subnet)
+                form.addRow(self.detect_button)
                 depth = QComboBox()
                 depth.addItem("Standard · more device details", "standard")
                 depth.addItem("Quick · common services", "quick")
@@ -636,13 +655,66 @@ class MainWindow(QMainWindow):
         layout.addWidget(plain_label("Double-click for full details. Remote OS, device type, risk and agent capability use available evidence; unknown exposure does not mean isolated."))
         return container
 
-    def detect_subnet(self):
-        try:
-            from discovr.network import local_subnet
-            self.fields["network"]["target"].setText(local_subnet())
-            self.form_error.clear()
-        except OSError as exc:
-            self.form_error.setText(f"Could not detect a subnet: {exc}. Enter a target range.")
+    def target_changed(self, _text):
+        self._target_revision += 1
+
+    def detect_subnet(self, checked=False, *, initial=False):
+        if self.demo or self.session.closed or self._detecting_network:
+            return
+        self._detecting_network = True
+        revision = self._target_revision
+        fill_target = not initial or not self.fields["network"]["target"].text().strip()
+        self.detect_button.setEnabled(False)
+        self.detect_button.setText("Detecting…")
+        self.local_connection.setEnabled(False)
+        self.local_network_status.setText("Reading this computer's connections…")
+
+        def detect():
+            try:
+                from discovr.network import local_network_info
+                info, error = local_network_info(), None
+            except Exception as exc:
+                info, error = None, exc
+            try:
+                self.preparation.network_detected.emit(info, error, revision, fill_target)
+            except RuntimeError:
+                pass  # The native window may have been destroyed while the OS was reading.
+
+        threading.Thread(target=detect, daemon=True, name="discovr-local-ip").start()
+
+    def network_detected(self, info, error, revision, fill_target):
+        self._detecting_network = False
+        if self.session.closed:
+            return
+        self.detect_button.setEnabled(True)
+        self.detect_button.setText("Use local subnet")
+        self.local_connection.blockSignals(True)
+        self.local_connection.clear()
+        connections = info["connections"] if info else []
+        selected = info["selected"] if info else None
+        if error or not connections:
+            self.local_connection.addItem("No local IPv4 detected")
+            self.local_network_status.setText("Connect to a network and try Use local subnet, or enter a target manually.")
+        else:
+            self.local_connection.addItem("Choose a local connection", None)
+            for connection in connections:
+                self.local_connection.addItem(f"{connection['ip']} · {connection['interface']}", connection)
+            self.local_connection.setCurrentIndex(selected + 1 if selected is not None else 0)
+            self.local_network_status.setText("Choose the connection you want to discover." if selected is None
+                                             else "Local IP detected. Review the target before starting.")
+        self.local_connection.blockSignals(False)
+        self.local_connection.setEnabled(bool(connections) and not error)
+        # A late startup result must not replace a target typed or selected meanwhile.
+        if selected is not None and fill_target and revision == self._target_revision:
+            self.local_connection_selected()
+
+    def local_connection_selected(self, _index=None):
+        connection = self.local_connection.currentData()
+        if self.session.closed or not connection:
+            return
+        self.fields["network"]["target"].setText(connection["subnet"])
+        self.local_network_status.setText("Local IP detected. Review the target before starting." if connection["netmask_known"]
+                                         else "Subnet mask unavailable; only this computer is selected. You can edit the target.")
 
     def browse_file(self, edit):
         path, _ = QFileDialog.getOpenFileName(self, "Choose a file", self.last_folder)
@@ -997,7 +1069,7 @@ class MainWindow(QMainWindow):
         self.integration.raise_()
 
     def show_help(self):
-        self.text_dialog("Using Discovr", "1. Choose a discovery source, enter its details, and select Start discovery.\n\n"
+        self.text_dialog("Using Discovr", "1. Your local IPv4 address and connection appear automatically under Network. Review the prepared subnet, choose another connection or edit the target. Use local subnet refreshes after network changes. No scan starts automatically.\n\n"
                          "2. Results arrive in the inventory. Up to four scans can run together. Stop selected preserves assets already found. "
                          "Double-click a scan to inspect warnings and incomplete results.\n\n"
                          "Select a device and choose Identify selected for a Standard check of that address. Hover over OS, ports and device type for evidence.\n\n"
