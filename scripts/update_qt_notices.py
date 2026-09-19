@@ -48,7 +48,7 @@ def main():
         for path, content in zip(sorted(licences), texts):
             sections.append(f"\n--- {base}{path} ---\n{content}\n")
     output = Path(__file__).resolve().parents[1] / "docs/licenses/Qt-NOTICES.txt"
-    output.write_text("\n".join(sections), encoding="utf-8")
+    output.write_text("\n".join(line.rstrip() for line in "\n".join(sections).splitlines()).rstrip() + "\n", encoding="utf-8")
     print(output)
 
 

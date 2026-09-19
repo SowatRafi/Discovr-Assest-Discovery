@@ -9,10 +9,11 @@ import json
 import logging
 import os
 from pathlib import Path
+import sys
 import tempfile
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QKeySequence
+from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
@@ -145,7 +146,14 @@ class MainWindow(QMainWindow):
         self.secret_fields = []
         self._allow_close = False
         self._jobs_signature = None
-        self.last_folder = str(Path.home() / "Documents")
+        location = Path.home() / "Documents"
+        if getattr(sys, "frozen", False):
+            location = Path(sys.executable).resolve().parent
+            # Mac reports belong beside the .app, never inside its signed resources.
+            if sys.platform == "darwin":
+                location = next((p.parent for p in location.parents if p.suffix == ".app"), location)
+        self.last_folder = str(location)
+        self.setWindowIcon(QIcon(str(Path(__file__).with_name("assets") / "logo.svg")))
         self.setWindowTitle(f"Discovr {__version__} — Asset discovery[*]")
         self.resize(1280, 820)
         self.setMinimumSize(920, 620)

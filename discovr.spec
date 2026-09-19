@@ -41,7 +41,7 @@ a = Analysis(
     ["discovr/desktop.py"],
     pathex=[],
     binaries=[],
-    datas=[(str(notices), "discovr")],
+    datas=[("discovr/assets", "discovr/assets"), (str(notices), "discovr")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

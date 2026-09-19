@@ -302,5 +302,3 @@ class _ActivityHandler(logging.Handler):
             self.session.note(record.levelname.lower(), record.getMessage().strip())
         except Exception:
             self.handleError(record)
-
-
