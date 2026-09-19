@@ -5,13 +5,14 @@
 #include <string.h>
 #include <unistd.h>
 
-int main(int argc, char *argv[]) {
+int main(void) {
     @autoreleasepool {
         NSString *engine = [[[NSBundle mainBundle] resourcePath]
             stringByAppendingPathComponent:@"runtime/Discovr"];
-        // Preserve support/test arguments as separate values; USB paths may have spaces.
-        argv[0] = (char *)[engine fileSystemRepresentation];
-        execv(argv[0], argv);
+        // The desktop has no command-line modes. Always start the bundled engine
+        // without arguments, including when LaunchServices supplies its own flags.
+        char *arguments[] = {(char *)[engine fileSystemRepresentation], NULL};
+        execv(arguments[0], arguments);
 
         int failure = errno;
         NSAlert *alert = [[NSAlert alloc] init];

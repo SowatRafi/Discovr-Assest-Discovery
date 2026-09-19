@@ -34,6 +34,10 @@ The runtime remains dynamically linked; source and replacement instructions acco
 
 ## Behaviour changes
 
+- Desktop-only launch: remove the legacy CLI, terminal reports/prompts, launch flags and Docker image.
+  Discovery, imports, exports and the demo are operated in native windows. Developer build/test
+  scripts remain separate from the product; packaged acceptance always opens the real desktop.
+
 - Cloud identities are scoped by provider and resource identity, avoiding collisions on
   reused private IPs. Full DNS names preserve domain boundaries. Ambiguous names stay separate.
 - Cloud VMs are classified before interpreting firewall port ranges as device evidence.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.0-rc.2 (2026-09-19)
+
+- Make both source and portable launches desktop-only; remove all app command-line modes and flags.
+- Delete the legacy scan CLI, terminal report/log helpers, Docker image and unused tabulate dependency.
+- Keep demo, report import/conversion and discovery in the native UI; run packaged diagnostics and
+  acceptance inside the GUI using private test handoffs, including macOS LaunchServices.
+
 ## 2.1.0-rc.1 (2026-09-19)
 
 - Identify this computer from OS facts and local listeners; read bounded HTTP/SSH/UPnP hints

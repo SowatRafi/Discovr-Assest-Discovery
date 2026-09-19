@@ -40,7 +40,7 @@ def main():
             with (contents / "Info.plist").open("wb") as output_plist:
                 plistlib.dump({"CFBundleName": "Discovr", "CFBundleExecutable": "Discovr",
                                "CFBundleIdentifier": "org.discovr.desktop", "CFBundlePackageType": "APPL",
-                               "CFBundleShortVersionString": "2.1.0", "CFBundleVersion": "2.1.0",
+                               "CFBundleShortVersionString": "2.1.0", "CFBundleVersion": "2.1.0.2",
                                "LSUIElement": False, "NSHighResolutionCapable": True,
                                "LSMinimumSystemVersion": "14.0" if platform.machine() == "arm64" else "15.0"},
                               output_plist)

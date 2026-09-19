@@ -85,11 +85,3 @@ go.work.sum
 .idea/
 .vscode/
 *.swp
-
-# -----------------------------
-# Docker
-# -----------------------------
-# Ignore local compose overrides (.dockerignore itself is part of the build and is committed)
-docker-compose.override.yml
-docker-compose.local.yml
-docker-compose.dev.yml

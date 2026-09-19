@@ -1,9 +1,8 @@
 """Tests for tagging, risk rating, inventory merging and report export (discovr.core)."""
 import csv
 import io
-import json
 
-from discovr.core import Exporter, csv_safe, enrich, merge_assets, to_csv, to_html
+from discovr.core import csv_safe, enrich, merge_assets, to_csv, to_html
 from discovr.risk import RiskAssessor
 from discovr.tagger import Tagger, port_set
 
@@ -143,14 +142,6 @@ def test_streaming_merge_stays_fast():
     for i in range(5000):
         merge_assets(inventory, [{"IP": f"10.{i // 250}.{i % 250}.1", "Ports": "22"}], "Network", index=index)
     assert len(inventory) == 5000 and time.perf_counter() - start < 5
-
-
-def test_exporter_writes_all_formats_to_out_dir(tmp_path):
-    paths = Exporter.save_results([{"IP": "1.2.3.4", "Hostname": "vm", "OS": "Linux", "Ports": "22"}],
-                                  ["csv", "json", "html"], "network", "20260101_000000", out_dir=tmp_path)
-    assert [p.suffix for p in paths] == [".csv", ".json", ".html"]
-    assert all(p.is_relative_to(tmp_path) and p.stat().st_size for p in paths)
-    assert json.loads(paths[1].read_text(encoding="utf-8"))[0]["Tag"] == "[Server]"
 
 
 def test_legacy_classes_still_work_standalone():
