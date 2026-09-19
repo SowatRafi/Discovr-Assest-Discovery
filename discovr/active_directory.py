@@ -5,7 +5,7 @@ are powered off or on another subnet during a network scan. Security and privacy
 
 * A simple bind (which
   carries the password) only happens inside a TLS channel whose certificate *verified*
-  (system trust store, or --ca-file for an internal CA); otherwise Discovr uses NTLM
+  (system trust store, or the desktop CA certificate field); otherwise Discovr uses NTLM
   challenge-response. The previous code used a plain LDAP simple bind, exposing the domain
   password to anyone sniffing the LAN.
 * Only one bind attempt is made per mechanism; repeated retries can trigger account lockout.
@@ -145,7 +145,7 @@ class ADDiscovery:
                 conn.open()  # TLS handshake + certificate verification happen here, before any password
             except LDAPException as exc:
                 raise RuntimeError(f"Could not verify the LDAPS certificate of {self.server_host} ({exc}) - "
-                                   "pass your domain CA with --ca-file, or omit --ldaps to use NTLM")
+                                   "choose your domain CA in the CA certificate field, or clear Use LDAPS to allow NTLM")
             if not conn.bind():
                 raise PermissionError(f"LDAPS bind failed: {conn.result.get('description')}")
             return conn, "LDAPS (verified certificate)"
@@ -169,7 +169,7 @@ class ADDiscovery:
         conn = Connection(server, self._ntlm_user(), self.password, authentication=NTLM, **options)
         if not conn.bind():
             raise PermissionError(f"NTLM bind failed: {conn.result.get('description')} "
-                                  "(if the DC requires LDAP signing, use --ldaps with --ca-file)")
+                                  "(if the DC requires LDAP signing, select Use LDAPS and choose its CA certificate)")
         return conn, "NTLM (challenge-response)"
 
     def run(self, on_progress=None, on_asset=None, cancel=None):

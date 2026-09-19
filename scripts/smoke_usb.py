@@ -46,24 +46,21 @@ def main():
             binary = folder / "Discovr/Discovr"
         environment = dict(os.environ, PATH="", PYTHONPATH="", PYTHONHOME="")
         assert not any(path.is_symlink() for path in folder.rglob("*")), "USB archive requires symlink support"
-        diagnostics = folder / "diagnostics.json"
-        result = subprocess.run([str(binary), "--diagnostics-file", str(diagnostics)], cwd=folder, env=environment,
-                                text=True, capture_output=True, timeout=90)
-        assert result.returncode == 0, f"Packaged diagnostics failed:\n{result.stdout}\n{result.stderr}"
-        assert json.loads(diagnostics.read_text())["ok"], diagnostics.read_text()
-        licence_file = folder / "notices.txt"
-        notices = subprocess.run([str(binary), "--licenses-file", str(licence_file)], cwd=folder, env=environment,
-                                 capture_output=True, timeout=30)
-        assert notices.returncode == 0 and "boto3" in licence_file.read_text(encoding="utf-8").lower(), notices.stderr
         handoff = folder / "startup.json"
         result_file = folder / "native-result.json"
-        environment.update(DISCOVR_TEST_STARTUP_FILE=str(handoff), DISCOVR_TEST_RESULT_FILE=str(result_file))
+        test_environment = {"DISCOVR_TEST_MODE": "1", "DISCOVR_TEST_STARTUP_FILE": str(handoff),
+                            "DISCOVR_TEST_RESULT_FILE": str(result_file)}
+        environment.update(test_environment)
         with (folder / "desktop.log").open("w+", encoding="utf-8") as output:
             arguments = [str(binary)]  # exercise the same zero-argument path as a double click
             if sys.platform == "darwin":
                 # Exercise LaunchServices (Finder's app-bundle path), not only the inner binary.
-                arguments = ["/usr/bin/open", "-W", "-n", str(folder / "Discovr/Discovr.app"), "--args",
-                             "--self-test", str(result_file), "--startup-file", str(handoff)]
+                arguments = ["/usr/bin/open", "-W", "-n"]
+                # LaunchServices does not inherit the caller's full environment.
+                # Set only the private GUI test handoff; pass no app arguments.
+                for key, value in {**test_environment, "PATH": "", "PYTHONPATH": "", "PYTHONHOME": ""}.items():
+                    arguments.extend(["--env", f"{key}={value}"])
+                arguments.append(str(folder / "Discovr/Discovr.app"))
             started = time.monotonic()
             process = subprocess.Popen(arguments, cwd=folder, env=environment,
                                        stdout=output, stderr=subprocess.STDOUT)

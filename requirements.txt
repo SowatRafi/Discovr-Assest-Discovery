@@ -6,7 +6,6 @@
 
 # --- Core --------------------------------------------------------------------
 psutil>=5.9          # interface + subnet detection (replaces unmaintained netifaces)
-tabulate>=0.9        # CLI result tables
 PySide6-Essentials==6.11.2  # native Qt Widgets; no browser, web engine or webview
 
 # --- Active Directory ----------------------------------------------------------

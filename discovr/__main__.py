@@ -1,5 +1,7 @@
-"""Entry point for `python -m discovr` and for the PyInstaller portable binary."""
-from discovr.cli import main
+"""Open the native desktop when running the source package."""
+import sys
+
+from discovr.desktop import main
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

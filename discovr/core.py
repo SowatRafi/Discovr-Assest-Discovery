@@ -1,4 +1,4 @@
-"""Shared plumbing for every discovery mode: logging, enrichment, merging, export and reporting.
+"""Shared plumbing for every discovery mode: enrichment, merging and report serialization.
 
 Every discovery module returns plain dicts ("assets") carrying at least IP / Hostname /
 OS / Ports / Source. Keeping assets as dicts lets each provider attach extra metadata
@@ -11,14 +11,10 @@ import html
 import io
 import ipaddress
 import json
-import logging
 import os
 import uuid
 from datetime import datetime
-from pathlib import Path
 from string import Template
-
-from tabulate import tabulate
 
 from discovr import __version__
 from discovr.risk import RISK_ORDER, RiskAssessor
@@ -33,15 +29,7 @@ BLANK_VALUES = {"", "n/a", "unknown", "none", "null"}
 # Leading characters that make spreadsheet apps evaluate a cell as a formula (OWASP CSV injection).
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
-log = logging.getLogger(__name__)
-
-
 # --------------------------------------------------------------------------- helpers
-
-def reports_dir(out_dir=None) -> Path:
-    """Folder for logs and reports: --out when given, else ~/Documents/discovr_reports."""
-    return Path(out_dir) if out_dir else Path.home() / "Documents" / "discovr_reports"
-
 
 def is_elevated() -> bool:
     """True when running as root (macOS/Linux) or as Administrator (Windows)."""
@@ -91,12 +79,6 @@ def _cell_text(value) -> str:
     if isinstance(value, dict):
         return json.dumps(value, default=str, separators=(",", ":"))
     return "" if value is None else str(value)
-
-
-def _clip(value, width=38) -> str:
-    """Shorten long text for the terminal table so rows stay on one line."""
-    text = _cell_text(value)
-    return text if len(text) <= width else text[: width - 1] + "…"
 
 
 def csv_safe(value) -> str:
@@ -342,74 +324,3 @@ def to_html(assets, title="Discovr asset report") -> str:
         # Escape HTML delimiters so reports remain safe and losslessly importable.
         data=to_json(assets).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e"),
     )
-
-
-class Logger:
-    """Per-run log file under <reports>/logs plus console output for Discovr's own messages."""
-
-    @staticmethod
-    def setup(feature: str, out_dir=None):
-        """Create the log file for this run and return (log_file, timestamp)."""
-        log_dir = reports_dir(out_dir) / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = log_dir / f"discovr_{feature}_log_{timestamp}.log"
-
-        # Root logger -> file at WARNING, so chatty SDKs (botocore, azure, urllib3) stay quiet...
-        logging.basicConfig(filename=str(log_file), level=logging.WARNING, encoding="utf-8",
-                            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", force=True)
-        # ...while Discovr's own INFO messages go to both the file and the console.
-        app = logging.getLogger("discovr")
-        app.setLevel(logging.INFO)
-        if not any(type(h) is logging.StreamHandler for h in app.handlers):
-            console = logging.StreamHandler()
-            console.setFormatter(logging.Formatter("%(message)s"))
-            app.addHandler(console)
-
-        print(f"[+] Logs saved at {log_file}")
-        return log_file, timestamp
-
-
-class Exporter:
-    """Writes CSV / JSON / HTML reports to <reports>/{csv,json,html}/discovr_<feature>_<ts>.*"""
-
-    WRITERS = {"csv": to_csv, "json": to_json, "html": to_html}
-
-    @staticmethod
-    def save_results(assets, formats, feature: str, timestamp: str, out_dir=None) -> list:
-        """Save ``assets`` in each requested format and return the written paths."""
-        assets = enrich(assets)
-        written = []
-        for fmt in formats:
-            folder = reports_dir(out_dir) / fmt
-            folder.mkdir(parents=True, exist_ok=True)
-            path = folder / f"discovr_{feature}_{timestamp}.{fmt}"
-            path.write_text(Exporter.WRITERS[fmt](assets), encoding="utf-8", newline="")
-            print(f"[+] {fmt.upper()} saved: {path}")
-            written.append(path)
-        return written
-
-
-class Reporter:
-    """Terminal summary table shown at the end of every CLI run."""
-
-    @staticmethod
-    def print_results(assets, total_hosts, context="assets"):
-        """Tag + risk-rate ``assets`` in place and print them as a grid table with a summary line."""
-        if not assets:
-            print("\n[!] No assets discovered.")
-            return
-        enrich(assets)
-        table = [
-            [_clip(a.get("IP", "N/A")), _clip(a.get("Hostname", "Unknown")), _clip(a.get("OS", "Unknown")),
-             _clip(a.get("Ports", "N/A"), 24), a.get("Tag"), a.get("Risk"),
-             "Yes" if a.get("AgentCapable") else "No", _clip(a.get("Source", ""), 16)]
-            for a in sorted(assets, key=_ip_sort_key)
-        ]
-        print("\nDiscovered Assets (final report):")
-        print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports", "Tag", "Risk", "Agent", "Source"],
-                       tablefmt="grid"))
-        agents = sum(bool(a.get("AgentCapable")) for a in assets)
-        urgent = sum(a.get("Risk") in ("Critical", "High") for a in assets)
-        print(f"\n[+] {len(assets)} {context} ({agents} agent-capable, {urgent} critical/high risk) "
-              f"discovered out of {total_hosts} scanned.")

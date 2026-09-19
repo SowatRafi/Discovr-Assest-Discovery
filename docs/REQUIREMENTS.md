@@ -19,7 +19,7 @@ single-file Windows/Linux builds. macOS Intel and Apple silicon are additional t
 | Active and passive discovery | Built-in TCP connections plus driver-free OS neighbour-cache observation; network/passive tests | Passive means cache observation, not packet sniffing. IPv4 network scope; cached entries may be stale. |
 | Clear exportable IP/hostname/OS/role report | Native table/evidence details; visible CSV/HTML/JSON buttons, offline import/conversion and complete JSON save; packaged round-trip checks | Unidentified fields include reasons. HTML is an optional report file, not the app interface. |
 | Open-source foundations | Python sockets/asyncio, ldap3, provider SDKs, Qt/PySide6; exact dependencies and licence notices | nmap was removed to satisfy the owner's no-extra-software instruction. |
-| Simple GUI or CLI | Native source form, subnet detection, progressive options, stop/progress, filters, help/demo; optional source CLI | Normal USB usage needs no terminal. |
+| Simple GUI or CLI | Native source form, subnet detection, progressive options, stop/progress, filters, help/demo; desktop-only launch | The CLI was removed at the user’s request; all discovery runs through the native desktop. |
 | AWS/Azure VM discovery | Regional/subscription inventory, runtime authentication, VM/agent/firewall context; provider fixtures | Real tenant access and permissions must be validated with owner credentials. |
 
 ## Constraints and limitations (brief page 3)

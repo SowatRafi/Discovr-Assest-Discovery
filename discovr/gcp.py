@@ -2,9 +2,9 @@
 
 google-cloud-compute (plus gRPC and protobuf) was replaced by two paginated REST calls:
 one *aggregated* instance list covering all zones - the old code only saw the single
---zone it was given - and one VPC firewall list used to work out exposed ports.
+zone it was given - and one VPC firewall list used to work out exposed ports.
 
-Credentials resolve at runtime: a service-account key file (--gcp-credentials), or
+Credentials resolve at runtime: a service-account key file chosen in the desktop, or
 Application Default Credentials (`gcloud auth application-default login`,
 GOOGLE_APPLICATION_CREDENTIALS, or the metadata server on GCP).
 """
@@ -150,7 +150,7 @@ def _gcp_list(session, url, aggregated=False, control=None, on_items=None) -> li
 
 
 class GCPDiscovery:
-    """Lists Compute Engine VMs in a project (all zones, or only --zone when given)."""
+    """Lists Compute Engine VMs in a project (all zones, or only the chosen zone)."""
 
     def __init__(self, project=None, zone=None, credentials_file=None):
         """
@@ -200,7 +200,8 @@ class GCPDiscovery:
         """Read project inventory; the caller owns and closes the authorised session."""
         project = self.project or default_project
         if not project:
-            raise RuntimeError("No GCP project given - pass --project or run `gcloud config set project <id>`")
+            raise RuntimeError("No GCP project given. Enter a Project ID in the GCP form, "
+                               "or choose a service-account key file that includes its project.")
         control.progress(0, 0, "Listing GCP instances")
         def discovered(instances):
             for instance in instances:

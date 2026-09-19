@@ -5,6 +5,7 @@
 Extract the download for your operating system once, then copy the **whole Discovr folder**
 to your drive. On Windows double-click **Discovr.exe**; on macOS **Discovr.app**;
 on Linux **Discovr**. No installer, terminal, Python, nmap, capture driver or cloud CLI is needed.
+Discovr has no command-line mode; use the native menus and controls for every operation.
 The app opens a native desktop window. An internet connection is unnecessary for local discovery.
 
 The fast folder is recommended. Optional Windows/Linux single-file builds are easier to copy

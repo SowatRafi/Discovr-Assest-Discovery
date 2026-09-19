@@ -34,8 +34,20 @@ def exercise(window, result_file):
         require(window.isVisible(), "Desktop window is not visible")
         require("discovr.server" not in sys.modules, "Desktop loaded the legacy HTTP server")
         require(not any("QtWeb" in name for name in sys.modules), "Desktop loaded a webview")
+        from importlib.util import find_spec
+        require(find_spec("discovr.cli") is None, "Removed CLI was bundled")
+        require(find_spec("tabulate") is None, "Unused terminal table dependency was bundled")
         result["platform"] = QApplication.platformName()
         result["checks"].append("native-window-without-web-server")
+        # Validate providers and licences inside the real GUI process. The product
+        # no longer has separate headless diagnostic or licence-output modes.
+        from discovr.diagnostics import check_runtime
+        import discovr
+        diagnostics = check_runtime()
+        require(diagnostics["ok"], str(diagnostics))
+        notices = Path(discovr.__file__).with_name("THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8")
+        require("boto3" in notices.lower(), "Bundled third-party notices are missing")
+        result["checks"].append("provider-diagnostics-and-licences")
         window.fields["network"]["target"].setText("invalid target")
         QTest.mouseClick(window.start_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: not window._preparing)

@@ -42,7 +42,7 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 
 ### USB app: no installer or commands
 
-1. Download the matching **discovr-usb** archive from the [2.1.0 RC1 release](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/tag/v2.1.0-rc.1).
+1. Download the matching **discovr-usb** archive from the [2.1.0 RC2 release](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/tag/v2.1.0-rc.2).
    Extract it once using your file manager and copy the **whole Discovr folder/app** to your USB drive.
 2. Plug in the drive and double-click **Discovr.exe** on Windows, **Discovr.app** on macOS,
    or **Discovr** on Linux. Discovr opens its own desktop window.
@@ -51,16 +51,16 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 
 | System | Download |
 | --- | --- |
-| Windows x64 | [USB folder ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.1/discovr-usb-windows-x64.zip) |
-| Linux x64 | [USB folder TAR.GZ](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.1/discovr-usb-linux-x64.tar.gz) |
-| macOS Apple silicon | [App ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.1/discovr-usb-macos-arm64.zip) |
-| macOS Intel | [App ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.1/discovr-usb-macos-x64.zip) |
+| Windows x64 | [USB folder ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.2/discovr-usb-windows-x64.zip) |
+| Linux x64 | [USB folder TAR.GZ](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.2/discovr-usb-linux-x64.tar.gz) |
+| macOS Apple silicon | [App ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.2/discovr-usb-macos-arm64.zip) |
+| macOS Intel | [App ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.2/discovr-usb-macos-x64.zip) |
 
 Prefer one file? Optional `discovr-single-windows-x64.exe` and `discovr-single-linux-x64`
 builds contain the same features. They unpack into temporary storage on each launch and
 start more slowly. The USB folder is recommended for speed. macOS already presents one `.app` item.
 
-RC1 is a prerelease. The release page includes build provenance and SHA-256 checksums for
+RC2 is a prerelease. The release page includes build provenance and SHA-256 checksums for
 all six downloads; publisher signing and live customer cloud/domain acceptance remain pending.
 
 **First time?** Follow the [illustrated usage and demo guide](docs/USER_GUIDE.md), or open
@@ -90,12 +90,13 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install --require-hashes -r requirements.lock
 python -m discovr                    # native desktop
-python -m discovr --help             # command line
 ```
 
 ## Native desktop
 
 Double-clicking opens a Qt Widgets application with native menus, controls and file dialogs.
+Discovr is desktop-only: there are no scan commands, terminal prompts or headless modes.
+Use **Help → Explore sample inventory** for the demo and **Import report** to open saved results.
 It does not run a browser or embedded webview. No listener starts unless you explicitly enable the local API.
 
 - **New discovery** — choose Network, Neighbour cache, Active Directory, AWS, Azure or GCP.
@@ -115,42 +116,6 @@ It does not run a browser or embedded webview. No listener starts unless you exp
 
 Risk, device type, agent capability and network OS are estimates from observed evidence.
 Unknown cloud exposure is never a guarantee of isolation.
-
-## Developer CLI (optional)
-
-The source distribution also supports headless automation. This is separate from normal USB use.
-In the examples below, run `python -m discovr` in place of `discovr`.
-
-```bash
-discovr --autoipaddr                                   # sweep the local subnet
-discovr --scan-network 10.10.0.0/22 --intensity gentle # sensitive network
-discovr --scan-network 10.0.0.5,10.0.1.0/24 --ports 22,3389,5985-5986
-discovr --ad --domain corp.local --username auditor@corp.local        # password is prompted
-discovr --cloud aws                                    # every enabled region
-discovr --cloud azure --subscription <id>              # omit --subscription to scan all
-discovr --cloud gcp --project my-project --gcp-credentials key.json
-discovr --passive --timeout 300                       # observe OS cache, no driver
-discovr --scan-network 10.0.0.0/24 --save yes --format all --out ./reports
-```
-
-(From source, replace `discovr` with `python -m discovr`.)
-
-| Option | Purpose |
-|---|---|
-| *(none)*, `--ui` | Native desktop |
-| `--scan-network RANGE`, `--autoipaddr` | Active network sweep of a CIDR / IP / list (up to a /16), or of the local subnet |
-| `--ports`, `--intensity`, `--parallel` | Port list, load profile, probes in flight |
-| `--ad --domain --username [--dc] [--ldaps] [--ca-file]` | Active Directory computers (password: prompt, or `DISCOVR_AD_PASSWORD`) |
-| `--cloud aws [--profile] [--region all]` | EC2 instances |
-| `--cloud azure [--subscription]` | Azure virtual machines |
-| `--cloud gcp [--project] [--zone] [--gcp-credentials]` | Compute Engine instances |
-| `--passive [--timeout]` | Observe the OS neighbour cache without sending packets |
-| `--diagnostics` | Offline validation of bundled providers and UI files; prints JSON |
-| `--save yes/no`, `--format csv/json/html/both/all`, `--out DIR` | Reports (default: CSV + JSON in `Documents/discovr_reports`) |
-
-Without `--save`, Windows asks whether to save (auto-saving after 15 seconds) and macOS/Linux
-save automatically. CLI exit codes: `0` success, `1` failure, `2` invalid arguments or
-incomplete cloud/directory coverage (partial reports are still saved), `130` interrupted.
 
 ## Discovery sources
 
@@ -193,7 +158,7 @@ that the operating system has not learned about. It observes IPv4 neighbours.
 
 Lists every computer account with OS, OU, last logon, enabled/stale state and domain-controller
 role, then resolves IPs. The password is only sent inside a TLS channel whose certificate
-verified (add `--ca-file corp-ca.pem` if your domain CA is not in the system trust store);
+is verified (choose a **CA certificate** in the Active Directory form if your domain CA is not in the system trust store);
 otherwise Discovr authenticates with NTLM. It is never stored. A normal domain user account is
 enough.
 
@@ -243,8 +208,7 @@ Keep inventories from unrelated on-premises networks separate when their address
 
 Use the visible **CSV / HTML / JSON** buttons (or **Export view**) to save reports through a native file dialog.
 Use **Save inventory** to preserve every asset as JSON, including filtered-out rows.
-The optional source CLI saves to `Documents/discovr_reports/{csv,json,html}` (or `--out DIR`)
-and writes a log to `.../logs`. Each field any source reported becomes a column.
+You choose where each report is saved. Each field any source reported becomes a column.
 CSV, JSON and new Discovr HTML reports can be imported and converted in the desktop.
 HTML contains safely escaped, inert JSON for lossless round trips; no script executes during import.
 CSV preserves flat fields and boolean meaning; JSON/HTML preserve structured metadata.
@@ -261,7 +225,6 @@ python scripts/package_usb.py dist/discovr-usb-windows-x64.zip
 python scripts/smoke_usb.py dist/discovr-usb-windows-x64.zip
 python scripts/smoke_usb.py dist/discovr-single-windows-x64.exe --single-file
 # Use the matching archive name above for macOS/Linux.
-docker build -t discovr .                    # CLI in a container
 ```
 
 GitHub Actions (`.github/workflows/build.yml`) tests on Windows, macOS and Linux, audits
@@ -276,7 +239,7 @@ See [requirements coverage](docs/REQUIREMENTS.md), [upgrade notes](docs/UPGRADE.
 
 ```
 discovr/
-  desktop.py    double-click launcher              cli.py     optional developer CLI
+  desktop.py / __main__.py  native desktop launchers
   native.py     Qt Widgets desktop                 session.py discovery/session controller
   network.py    async TCP sweep engine              passive.py neighbour-cache observation
   active_directory.py  LDAP                         aws.py / azure.py / gcp.py  cloud providers
@@ -289,7 +252,7 @@ discovr/
 
 Only scan networks, directories and cloud accounts you own or are explicitly authorised to
 assess. Active scanning can trip intrusion-detection systems; agree the scope and timing with
-the network owner first, and prefer `--intensity gentle` or passive mode on fragile networks.
+the network owner first, and choose **Gentle** under **More scan options**, or passive mode on fragile networks.
 
 ## License
 
