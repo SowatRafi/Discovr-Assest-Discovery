@@ -1,294 +1,415 @@
-from pathlib import Path
-import logging
+"""Shared plumbing for every discovery mode: logging, enrichment, merging, export and reporting.
+
+Every discovery module returns plain dicts ("assets") carrying at least IP / Hostname /
+OS / Ports / Source. Keeping assets as dicts lets each provider attach extra metadata
+(cloud region, AD OU, MAC address...) without schema changes; exporters simply add a
+column for every key they see.
+"""
 import csv
+import ctypes
+import html
+import io
+import ipaddress
 import json
+import logging
+import os
+import uuid
 from datetime import datetime
+from pathlib import Path
+from string import Template
+
 from tabulate import tabulate
-from discovr.tagger import Tagger
-from discovr.risk import RiskAssessor
+
+from discovr import __version__
+from discovr.risk import RISK_ORDER, RiskAssessor
+from discovr.tagger import Tagger, port_sort_key
+
+# Columns shown first in tables and exports; provider-specific fields follow alphabetically.
+CORE_FIELDS = ["IP", "Hostname", "OS", "Ports", "Tag", "Risk", "AgentCapable", "Source", "MAC"]
+# Fields computed from the others - never merged, always recomputed.
+DERIVED_FIELDS = {"Tag", "Risk", "AgentCapable"}
+# Placeholder values that carry no information and may be overwritten by a better source.
+BLANK_VALUES = {"", "n/a", "unknown", "none", "null"}
+# Leading characters that make spreadsheet apps evaluate a cell as a formula (OWASP CSV injection).
+FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+log = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------- helpers
+
+def reports_dir(out_dir=None) -> Path:
+    """Folder for logs and reports: --out when given, else ~/Documents/discovr_reports."""
+    return Path(out_dir) if out_dir else Path.home() / "Documents" / "discovr_reports"
+
+
+def is_elevated() -> bool:
+    """True when running as root (macOS/Linux) or as Administrator (Windows)."""
+    if os.name == "nt":
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except (AttributeError, OSError):
+            return False
+    return os.geteuid() == 0
+
+
+def is_blank(value) -> bool:
+    """True for None, empty containers and placeholder strings such as "N/A" or "Unknown"."""
+    if value is None or (isinstance(value, (list, tuple, set, dict)) and not value):
+        return True
+    return isinstance(value, str) and value.strip().lower() in BLANK_VALUES
+
+
+def enrich(assets):
+    """Add Tag, AgentCapable and Risk to every asset in place (safe to call repeatedly)."""
+    assets = list(assets)
+    Tagger.tag_assets(assets)
+    RiskAssessor.add_risks(assets)
+    return assets
+
+
+def columns_for(assets) -> list:
+    """Stable column order: core fields first (if present), then everything else A-Z."""
+    keys = {k for a in assets for k in a}
+    return [c for c in CORE_FIELDS if c in keys] + sorted(keys - set(CORE_FIELDS))
+
+
+def _ip_sort_key(asset):
+    """Sort numerically by IP; assets without a valid IP go last, ordered by hostname."""
+    try:
+        return (0, int(ipaddress.ip_address(str(asset.get("IP", "")).strip())), "")
+    except ValueError:
+        return (1, 0, str(asset.get("Hostname", "")).lower())
+
+
+def _cell_text(value) -> str:
+    """Render any field value as human-readable text (lists joined, dicts as compact JSON)."""
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (list, tuple, set)):
+        return "; ".join(_cell_text(v) for v in value)
+    if isinstance(value, dict):
+        return json.dumps(value, default=str, separators=(",", ":"))
+    return "" if value is None else str(value)
+
+
+def _clip(value, width=38) -> str:
+    """Shorten long text for the terminal table so rows stay on one line."""
+    text = _cell_text(value)
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def csv_safe(value) -> str:
+    """Cell text with spreadsheet formulas neutralised.
+
+    Hostnames, AD descriptions and cloud tags are attacker-controllable; a name such as
+    "=HYPERLINK(...)" would otherwise execute when an analyst opens the CSV in Excel.
+    """
+    text = _cell_text(value)
+    return "'" + text if text.startswith(FORMULA_PREFIXES) else text
+
+
+# --------------------------------------------------------------------------- merging
+
+def _host_name(asset) -> str:
+    """Keep the DNS suffix: pc01 in two domains is not the same computer."""
+    name = str(asset.get("Hostname") or "").strip().lower()
+    return "" if is_blank(name) else name.rstrip(".")
+
+
+def asset_key(asset) -> str:
+    """Prefer provider identity; use a UUID when a record has no usable identity."""
+    return next((f"{kind}:{value}" for kind, value in _identities(asset)), f"id:{uuid.uuid4().hex}")
+
+
+def _identities(asset) -> list:
+    """Provider-scoped resource identity, or local IP/MAC/full-DNS identities."""
+    cloud = str(asset.get("Cloud") or "").strip().lower()
+    if cloud:
+        # Private IPs and display names are routinely reused across accounts/VPCs.
+        # Never correlate cloud and LAN records without explicit topology evidence.
+        scope = [cloud] + [str(asset.get(k) or "").lower() for k in
+                           ("AccountID", "SubscriptionID", "ProjectID", "Region", "Zone")]
+        instance = str(asset.get("InstanceID") or "").strip().lower()
+        if not is_blank(instance):
+            return [("cloud", json.dumps(scope + [instance], separators=(",", ":")))]
+        return []
+    ip = str(asset.get("IP") or "").strip()
+    try:
+        ip = str(ipaddress.ip_address(ip))
+    except ValueError:
+        ip = ""
+    mac = str(asset.get("MAC") or "").strip().lower().replace("-", ":")
+    found = [("ip", ip)] if not is_blank(ip) else []
+    if not is_blank(mac):
+        found.append(("mac", mac))
+    if _host_name(asset):
+        found.append(("host", _host_name(asset)))
+    return found
+
+
+def _merge_tokens(first, second) -> str:
+    """Union two comma/semicolon separated lists (ports or sources), numbers sorted first."""
+    tokens = set()
+    for value in (first, second):
+        if not is_blank(value):
+            values = value if isinstance(value, (list, tuple, set)) else str(value).replace(";", ",").split(",")
+            tokens.update(str(t).strip() for t in values if not is_blank(t))
+    ordered = sorted(tokens, key=port_sort_key)
+    return ",".join(ordered) if ordered else str(first or second or "")
+
+
+def merge_assets(inventory: dict, assets, source=None, index=None, keys=None) -> dict:
+    """Merge newly discovered assets into ``inventory`` (key -> asset) in place.
+
+    The same machine is often seen by several sources - AD knows its exact OS, the
+    network scan knows its open ports, the cloud API knows its instance ID. Records are
+    matched by scoped resource identity or local IP/MAC (unambiguous hostname when one
+    side lacks an IP); each field keeps
+    the most informative value, port and source lists are unioned, and derived fields
+    (Tag/Risk/AgentCapable) are recomputed for the touched records only.
+
+    :param index: identity -> key lookup to reuse across calls. Long-lived callers (the
+        UI streams one host at a time) pass their own dict so each merge stays O(1).
+    """
+    if index is None:
+        index = {}
+        for key, asset in inventory.items():
+            for ident in _identities(asset):
+                index.setdefault(ident, set()).add(key)
+    touched = set()
+    for incoming in assets:
+        incoming = dict(incoming)
+        if source:
+            incoming.setdefault("Source", source)
+        identities = _identities(incoming)
+        matches = set()
+        for ident in identities:
+            candidates = index.get(ident, set())
+            if ident[0] == "host":
+                # A name can fill in missing addresses, but cannot override two known,
+                # different addresses. Ambiguous names are deliberately kept separate.
+                candidates = {k for k in candidates if is_blank(incoming.get("IP"))
+                              or is_blank(inventory[k].get("IP"))}
+            matches.update(candidates)
+        key = next(iter(matches)) if len(matches) == 1 else asset_key(incoming)
+        if key in inventory and key not in matches:
+            key = f"id:{uuid.uuid4().hex}"
+        current = inventory.setdefault(key, {})
+        old_identities = _identities(current)
+        same_source = bool((set(str(current.get("Source", "")).split(", ")) &
+                            set(str(incoming.get("Source", "")).split(", "))) - {""})
+        preserve_os = not is_blank(current.get("OS")) and (is_blank(incoming.get("OS")) or
+            ("guessed" in str(incoming.get("OS", "")).lower() and
+             "guessed" not in str(current.get("OS", "")).lower()))
+        for field, value in incoming.items():
+            if field in DERIVED_FIELDS:
+                continue
+            if field in ("OSConfidence", "OSEvidence") and preserve_os:
+                continue  # Evidence must describe the OS we actually kept.
+            if field == "Ports":
+                # Directory/cache updates carry no service evidence. They must not
+                # erase ports learned by a network scan after the sources have merged.
+                refresh_ports = same_source and (incoming.get("Source") == current.get("Source")
+                                                  or incoming.get("Source") == "Network" or incoming.get("Cloud"))
+                current["Ports"] = (_merge_tokens(None, value) if refresh_ports
+                                    else _merge_tokens(current.get("Ports"), value))
+            elif field == "Source":
+                current["Source"] = _merge_tokens(current.get("Source"), value).replace(",", ", ")
+            elif is_blank(current.get(field)) and not is_blank(value):
+                current[field] = value
+            elif field == "OS" and "guessed" in str(current.get("OS", "")).lower() and not is_blank(value) \
+                    and "guessed" not in str(value).lower():
+                current[field] = value  # a real OS name beats a port-based guess
+            elif same_source and (not is_blank(value) or incoming.get("Cloud")) and not (
+                    field == "OS" and (is_blank(value) or ("guessed" in str(value).lower()
+                                      and "guessed" not in str(current.get("OS", "")).lower()))):
+                current[field] = value  # repeat scans must refresh power state, exposure and IPs
+            elif field not in current:
+                current[field] = value
+        for ident in old_identities:
+            index.get(ident, set()).discard(key)
+            if not index.get(ident):
+                index.pop(ident, None)
+        for ident in _identities(current):
+            index.setdefault(ident, set()).add(key)
+        touched.add(key)
+        if keys is not None:
+            keys.append(key)
+    enrich(inventory[key] for key in touched)
+    return inventory
+
+
+# --------------------------------------------------------------------------- export
+
+def to_csv(assets) -> str:
+    """Serialise assets as CSV text with one column per field seen (formula-safe)."""
+    buffer = io.StringIO()
+    fields = columns_for(assets)
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(csv_safe(f) for f in fields)  # keys come from imported data too: headers can carry formulas
+    for asset in assets:
+        writer.writerow(csv_safe(asset.get(f)) for f in fields)
+    return buffer.getvalue()
+
+
+def to_json(assets) -> str:
+    """Serialise assets as pretty JSON (datetimes and other objects become strings)."""
+    return json.dumps(list(assets), indent=2, default=str)
+
+
+_REPORT = Template("""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$title</title>
+<style>
+  /* Self-contained report: no external fonts, scripts or images, so it opens offline. */
+  :root { color-scheme: light dark; --bg:#ffffff; --fg:#0f172a; --muted:#475569; --line:#e2e8f0;
+          --card:#f8fafc; --crit:#b91c1c; --high:#c2410c; --med:#a16207; --low:#15803d; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0b1015; --fg:#e6edf3; --muted:#9fb0bf; --line:#1f2a33; --card:#11181f;
+            --crit:#f87171; --high:#fb923c; --med:#facc15; --low:#4ade80; } }
+  body { margin:0; padding:24px; background:var(--bg); color:var(--fg);
+         font:14px/1.5 "Fira Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  h1 { font:600 22px/1.2 "Fira Code", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; margin:0 0 4px; }
+  p.meta { color:var(--muted); margin:0 0 20px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin-bottom:20px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 16px; }
+  .tile b { display:block; font-size:24px; font-variant-numeric:tabular-nums; }
+  .tile span { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { position:sticky; top:0; background:var(--card); font-size:12px; text-transform:uppercase; color:var(--muted); }
+  td.mono { font-family:"Fira Code", ui-monospace, Menlo, Consolas, monospace; font-variant-numeric:tabular-nums; }
+  .risk { font-weight:600; }
+  .Critical { color:var(--crit); } .High { color:var(--high); } .Medium { color:var(--med); } .Low { color:var(--low); }
+  details summary { cursor:pointer; color:var(--muted); }
+  dl { display:grid; grid-template-columns:max-content 1fr; gap:2px 12px; margin:6px 0 0; font-size:12px; }
+  dt { color:var(--muted); } dd { margin:0; overflow-wrap:anywhere; }
+  @media print { th { position:static; } details { display:block; } }
+</style></head>
+<body>
+<h1>Discovr asset report</h1>
+<p class="meta">Generated $generated by Discovr $version &middot; $count assets</p>
+<section class="tiles" aria-label="Summary">$tiles</section>
+<table>
+<thead><tr><th scope="col">IP</th><th scope="col">Hostname</th><th scope="col">OS</th><th scope="col">Ports</th>
+<th scope="col">Tag</th><th scope="col">Risk</th><th scope="col">Agent</th><th scope="col">Source</th><th scope="col">Details</th></tr></thead>
+<tbody>
+$rows
+</tbody></table>
+<script type="application/json" id="discovr-data">$data</script>
+</body></html>
+""")
+
+
+def to_html(assets, title="Discovr asset report") -> str:
+    """Render a self-contained, printable HTML report; every value is HTML-escaped.
+
+    Escaping matters: hostnames and mDNS names come from the network and are attacker
+    controlled, so an unescaped "<script>" hostname would run in the analyst's browser.
+    """
+    assets = sorted(assets, key=_ip_sort_key)
+
+    def esc(value):
+        """Field value as escaped HTML text."""
+        return html.escape(_cell_text(value))
+
+    risk_counts = {level: sum(a.get("Risk") == level for a in assets) for level in RISK_ORDER}
+    tiles = [("Assets", len(assets)), ("Agent-capable", sum(bool(a.get("AgentCapable")) for a in assets))]
+    tiles += [(level, risk_counts[level]) for level in RISK_ORDER]
+    tile_html = "".join(f'<div class="tile"><b>{n}</b><span>{html.escape(label)}</span></div>' for label, n in tiles)
+
+    rows = []
+    for a in assets:
+        extras = {k: v for k, v in a.items() if k not in CORE_FIELDS and not is_blank(v)}
+        # Provider metadata goes in a native <details> disclosure: readable without any JavaScript.
+        details = ""
+        if extras:
+            items = "".join(f"<dt>{html.escape(k)}</dt><dd>{esc(v)}</dd>" for k, v in sorted(extras.items()))
+            details = f"<details><summary>{len(extras)} fields</summary><dl>{items}</dl></details>"
+        risk = html.escape(str(a.get("Risk", "")))
+        rows.append(
+            f'<tr><td class="mono">{esc(a.get("IP"))}</td><td>{esc(a.get("Hostname"))}</td>'
+            f'<td>{esc(a.get("OS"))}</td><td class="mono">{esc(a.get("Ports"))}</td><td>{esc(a.get("Tag"))}</td>'
+            f'<td class="risk {risk}">{risk}</td><td>{esc(a.get("AgentCapable", ""))}</td>'
+            f'<td>{esc(a.get("Source"))}</td><td>{details}</td></tr>'
+        )
+    return _REPORT.substitute(
+        title=html.escape(title), generated=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        version=__version__, count=len(assets), tiles=tile_html, rows="\n".join(rows),
+        # JSON is inert, but </script> inside a hostname could end its element.
+        # Escape HTML delimiters so reports remain safe and losslessly importable.
+        data=to_json(assets).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e"),
+    )
 
 
 class Logger:
+    """Per-run log file under <reports>/logs plus console output for Discovr's own messages."""
+
     @staticmethod
-    def setup(feature: str):
-        docs_path = Path.home() / "Documents" / "discovr_reports" / "logs"
-        docs_path.mkdir(parents=True, exist_ok=True)
-
+    def setup(feature: str, out_dir=None):
+        """Create the log file for this run and return (log_file, timestamp)."""
+        log_dir = reports_dir(out_dir) / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = docs_path / f"discovr_{feature}_log_{timestamp}.log"
+        log_file = log_dir / f"discovr_{feature}_log_{timestamp}.log"
 
-        logging.basicConfig(
-            filename=str(log_file),
-            level=logging.INFO,
-            format="%(asctime)s [%(levelname)s] %(message)s",
-            force=True,
-        )
-        console = logging.StreamHandler()
-        console.setLevel(logging.INFO)
-        console.setFormatter(logging.Formatter("%(message)s"))
-        logging.getLogger().addHandler(console)
+        # Root logger -> file at WARNING, so chatty SDKs (botocore, azure, urllib3) stay quiet...
+        logging.basicConfig(filename=str(log_file), level=logging.WARNING, encoding="utf-8",
+                            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", force=True)
+        # ...while Discovr's own INFO messages go to both the file and the console.
+        app = logging.getLogger("discovr")
+        app.setLevel(logging.INFO)
+        if not any(type(h) is logging.StreamHandler for h in app.handlers):
+            console = logging.StreamHandler()
+            console.setFormatter(logging.Formatter("%(message)s"))
+            app.addHandler(console)
 
         print(f"[+] Logs saved at {log_file}")
         return log_file, timestamp
 
 
 class Exporter:
+    """Writes CSV / JSON / HTML reports to <reports>/{csv,json,html}/discovr_<feature>_<ts>.*"""
+
+    WRITERS = {"csv": to_csv, "json": to_json, "html": to_html}
+
     @staticmethod
-    def save_results(assets, formats, feature: str, timestamp: str):
-        """
-        Save assets in JSON and/or CSV.
-        Special case: Azure cloud scan exports 4 optimized CSVs inside azure_<timestamp> folder.
-        """
-        base_path = Path.home() / "Documents" / "discovr_reports"
-        csv_dir = base_path / "csv"
-        json_dir = base_path / "json"
-        csv_dir.mkdir(parents=True, exist_ok=True)
-        json_dir.mkdir(parents=True, exist_ok=True)
-
-        # JSON Export
-        if "json" in formats:
-            json_file = json_dir / f"discovr_{feature}_{timestamp}.json"
-            with open(json_file, "w", encoding="utf-8") as f:
-                json.dump(assets, f, indent=4, default=str)
-            print(f"[+] JSON saved: {json_file}")
-
-        # CSV Export
-        if "csv" in formats:
-            # Special case: Azure Cloud Scan
-            if feature == "cloud":
-                azure_dir = csv_dir / f"azure_{timestamp}"
-                azure_dir.mkdir(parents=True, exist_ok=True)
-
-                vms = [a for a in assets if a.get("Type") == "VirtualMachine"]
-                vnets = [a for a in assets if a.get("Type") == "VirtualNetwork"]
-                nsgs = [a for a in assets if a.get("Type") == "NetworkSecurityGroup"]
-                rgs = [a for a in assets if a.get("Type") == "ResourceGroup"]
-
-                # VMs CSV
-                vm_file = azure_dir / f"azure_vms_{timestamp}.csv"
-                with open(vm_file, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerow([
-                        "ResourceGroup", "Name", "OS", "Size", "PowerState",
-                        "Risk", "OpenPorts", "PrivateIP", "PublicIP",
-                        "NIC", "Subnet", "VNet", "AgentCompatible", "AgentVersion", "Tags"
-                    ])
-                    for vm in vms:
-                        net = vm.get("Networking", {})
-                        tags = vm.get("Tags") or {}
-                        tags_str = ";".join([f"{k}={v}" for k, v in tags.items()]) if isinstance(tags, dict) else ""
-                        writer.writerow([
-                            vm.get("ResourceGroup", ""),
-                            vm.get("Name", ""),
-                            vm.get("OS", ""),
-                            vm.get("Size", ""),
-                            vm.get("PowerState", ""),
-                            vm.get("Risk", ""),
-                            ";".join(vm.get("OpenPorts", [])) if vm.get("OpenPorts") else "",
-                            net.get("PrivateIP", ""),
-                            net.get("PublicIP", ""),
-                            net.get("NIC", ""),
-                            net.get("Subnet", ""),
-                            net.get("VNet", ""),
-                            "Yes" if vm.get("AgentCompatible") else "No",
-                            vm.get("AgentVersion", ""),
-                            tags_str,
-                        ])
-                print(f"[+] Azure VMs CSV saved: {vm_file}")
-
-                # VNets CSV
-                vnet_file = azure_dir / f"azure_vnets_{timestamp}.csv"
-                with open(vnet_file, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(["ResourceGroup", "Name", "AddressSpace", "Subnets", "DNS", "Risk"])
-                    for vn in vnets:
-                        writer.writerow([
-                            vn.get("ResourceGroup", ""),
-                            vn.get("Name", ""),
-                            ";".join(vn.get("AddressSpace", [])),
-                            ";".join(vn.get("Subnets", [])),
-                            ";".join(vn.get("DNS", [])) if vn.get("DNS") else "",
-                            vn.get("Risk", "Low"),
-                        ])
-                print(f"[+] Azure VNets CSV saved: {vnet_file}")
-
-                # NSGs CSV
-                nsg_file = azure_dir / f"azure_nsgs_{timestamp}.csv"
-                with open(nsg_file, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(["ResourceGroup", "Name", "Risk", "RuleCount", "RuleSummary", "AssociatedSubnets", "AssociatedNICs"])
-                    for n in nsgs:
-                        summary = []
-                        for rule in n.get("SecurityRules", []):
-                            marker = "✅" if rule["Access"].lower() == "allow" else "❌"
-                            summary.append(f"{marker} {rule['Name']}({rule['Ports']})")
-                        writer.writerow([
-                            n.get("ResourceGroup", ""),
-                            n.get("Name", ""),
-                            n.get("Risk", ""),
-                            len(n.get("SecurityRules", [])),
-                            "; ".join(summary),
-                            ";".join(n.get("AssociatedSubnets", [])),
-                            ";".join(n.get("AssociatedNICs", [])),
-                        ])
-                print(f"[+] Azure NSGs CSV saved: {nsg_file}")
-
-                # Summary CSV
-                summary_file = azure_dir / f"azure_summary_{timestamp}.csv"
-                with open(summary_file, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(["ResourceGroup", "VMCount", "VMHighRisk", "VNetCount", "NSGCount", "NSGHighRisk"])
-                    for rg in rgs:
-                        rg_name = rg.get("Name", "")
-                        rg_vms = [v for v in vms if v.get("ResourceGroup") == rg_name]
-                        rg_vnets = [v for v in vnets if v.get("ResourceGroup") == rg_name]
-                        rg_nsgs = [n for n in nsgs if n.get("ResourceGroup") == rg_name]
-                        high_vms = sum(1 for v in rg_vms if v.get("Risk") in ["High", "Critical"])
-                        high_nsgs = sum(1 for n in rg_nsgs if n.get("Risk") in ["High", "Critical"])
-                        writer.writerow([
-                            rg_name, len(rg_vms), high_vms, len(rg_vnets), len(rg_nsgs), high_nsgs
-                        ])
-                print(f"[+] Azure Summary CSV saved: {summary_file}")
-
-            else:
-                # Default flat CSV for other scans
-                csv_file = csv_dir / f"discovr_{feature}_{timestamp}.csv"
-
-                def flatten_dict(d, parent_key="", sep="."):
-                    items = []
-                    for k, v in d.items():
-                        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-                        if isinstance(v, dict):
-                            items.extend(flatten_dict(v, new_key, sep=sep).items())
-                        elif isinstance(v, list):
-                            items.append((new_key, ";".join(map(str, v))))
-                        else:
-                            items.append((new_key, v))
-                    return dict(items)
-
-                flat_assets = [flatten_dict(a) for a in assets]
-
-                if flat_assets:
-                    headers = sorted({key for a in flat_assets for key in a.keys()})
-                    with open(csv_file, "w", newline="", encoding="utf-8") as f:
-                        writer = csv.DictWriter(f, fieldnames=headers)
-                        writer.writeheader()
-                        for a in flat_assets:
-                            writer.writerow(a)
-                    print(f"[+] CSV saved: {csv_file}")
+    def save_results(assets, formats, feature: str, timestamp: str, out_dir=None) -> list:
+        """Save ``assets`` in each requested format and return the written paths."""
+        assets = enrich(assets)
+        written = []
+        for fmt in formats:
+            folder = reports_dir(out_dir) / fmt
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"discovr_{feature}_{timestamp}.{fmt}"
+            path.write_text(Exporter.WRITERS[fmt](assets), encoding="utf-8", newline="")
+            print(f"[+] {fmt.upper()} saved: {path}")
+            written.append(path)
+        return written
 
 
 class Reporter:
+    """Terminal summary table shown at the end of every CLI run."""
+
     @staticmethod
     def print_results(assets, total_hosts, context="assets"):
+        """Tag + risk-rate ``assets`` in place and print them as a grid table with a summary line."""
         if not assets:
             print("\n[!] No assets discovered.")
             return
-
-        tagged_assets = Tagger.tag_assets(assets)
-        risked_assets = RiskAssessor.add_risks(tagged_assets)
-
-        # Normalize RG names
-        for a in risked_assets:
-            if a.get("ResourceGroup"):
-                a["ResourceGroup"] = a["ResourceGroup"].lower()
-
-        groups = {}
-        for a in risked_assets:
-            rg = a.get("ResourceGroup", a.get("Name", "unknownrg")).lower()
-            groups.setdefault(rg, []).append(a)
-
-        for rg, items in groups.items():
-            Reporter._print_resource_group(rg, items)
-
-    @staticmethod
-    def _print_resource_group(rg_name, items):
-        rg_info = next((i for i in items if i.get("Type") == "ResourceGroup"), None)
-        header_line = "═" * 70
-        if rg_info:
-            print(f"\n{header_line}\nResource Group: {rg_info.get('Name')} "
-                  f"(Location: {rg_info.get('Location')})\nTags: {rg_info.get('Tags')}\n{header_line}")
-        else:
-            print(f"\n{header_line}\nResource Group: {rg_name}\n{header_line}")
-
-        vms = [i for i in items if i.get("Type") == "VirtualMachine"]
-        if vms:
-            print("\nAssociated Virtual Machines")
-            print(tabulate(
-                [
-                    [
-                        vm["Name"],
-                        vm.get("OS", "Unknown"),
-                        vm.get("Size", "Unknown"),
-                        vm.get("PowerState", "Unknown"),
-                        vm.get("Risk", "Unknown"),
-                        ";".join(vm.get("OpenPorts", [])) if vm.get("OpenPorts") else "None",
-                        vm.get("Networking", {}).get("PrivateIP", "N/A"),
-                        vm.get("Networking", {}).get("PublicIP", "N/A"),
-                        vm.get("Networking", {}).get("NIC", "N/A"),
-                        f"{vm.get('Networking', {}).get('Subnet','N/A')}/{vm.get('Networking', {}).get('VNet','N/A')}",
-                        "Yes" if vm.get("AgentCompatible") else "No",
-                        vm.get("AgentVersion", "N/A"),
-                        vm.get("Tags", {}),
-                    ]
-                    for vm in vms
-                ],
-                headers=["Name", "OS", "Size", "PowerState", "Risk", "OpenPorts",
-                         "PrivateIP", "PublicIP", "NIC", "Subnet/VNet", "AgentCompatible", "AgentVersion", "Tags"],
-                tablefmt="grid"
-            ))
-
-        vnets = [i for i in items if i.get("Type") == "VirtualNetwork"]
-        if vnets:
-            print("\nAssociated Virtual Networks")
-            print(tabulate(
-                [
-                    [
-                        vn["Name"],
-                        ";".join(vn.get("AddressSpace", [])),
-                        ";".join(vn.get("Subnets", [])),
-                        ";".join(vn.get("DNS", [])) if vn.get("DNS") else "-",
-                        vn.get("Risk", "Low"),
-                    ]
-                    for vn in vnets
-                ],
-                headers=["Name", "Address Space", "Subnets", "DNS", "Risk"],
-                tablefmt="grid"
-            ))
-
-        nsgs = [i for i in items if i.get("Type") == "NetworkSecurityGroup"]
-        if nsgs:
-            print("\nAssociated Network Security Groups")
-            for n in nsgs:
-                print(f"\nNSG: {n['Name']} | Risk: {n.get('Risk', 'Unknown')} | Rules: {len(n.get('SecurityRules', []))}")
-                rules_table = [
-                    [
-                        "✅" if rule["Access"].lower() == "allow" else "❌",
-                        rule["Name"],
-                        rule["Direction"],
-                        rule["Access"],
-                        rule["Protocol"],
-                        rule["Ports"],
-                    ]
-                    for rule in n.get("SecurityRules", [])
-                ]
-                if rules_table:
-                    print(tabulate(rules_table,
-                                   headers=["", "Rule", "Direction", "Access", "Protocol", "Ports"],
-                                   tablefmt="grid"))
-                if n.get("AssociatedSubnets"):
-                    print(f"Associated Subnets: {', '.join(n['AssociatedSubnets'])}")
-                if n.get("AssociatedNICs"):
-                    print(f"Associated NICs: {', '.join(n['AssociatedNICs'])}")
-
-        vm_count = len(vms)
-        vnet_count = len(vnets)
-        nsg_count = len(nsgs)
-        high_risk_vms = sum(1 for vm in vms if vm.get("Risk") in ["High", "Critical"])
-        high_risk_nsgs = sum(1 for n in nsgs if n.get("Risk") in ["High", "Critical"])
-        print("\n" + "-" * 70)
-        print(f"Summary for Resource Group '{rg_name}':")
-        print(f"- {vm_count} Virtual Machines ({high_risk_vms} High/Critical Risk)")
-        print(f"- {vnet_count} Virtual Networks")
-        print(f"- {nsg_count} Network Security Groups ({high_risk_nsgs} High/Critical Risk)")
-        print("-" * 70)
+        enrich(assets)
+        table = [
+            [_clip(a.get("IP", "N/A")), _clip(a.get("Hostname", "Unknown")), _clip(a.get("OS", "Unknown")),
+             _clip(a.get("Ports", "N/A"), 24), a.get("Tag"), a.get("Risk"),
+             "Yes" if a.get("AgentCapable") else "No", _clip(a.get("Source", ""), 16)]
+            for a in sorted(assets, key=_ip_sort_key)
+        ]
+        print("\nDiscovered Assets (final report):")
+        print(tabulate(table, headers=["IP", "Hostname", "OS", "Ports", "Tag", "Risk", "Agent", "Source"],
+                       tablefmt="grid"))
+        agents = sum(bool(a.get("AgentCapable")) for a in assets)
+        urgent = sum(a.get("Risk") in ("Critical", "High") for a in assets)
+        print(f"\n[+] {len(assets)} {context} ({agents} agent-capable, {urgent} critical/high risk) "
+              f"discovered out of {total_hosts} scanned.")

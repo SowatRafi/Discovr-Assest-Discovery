@@ -1,272 +1,259 @@
+"""Discovr command line: headless scans for scripts and servers, or the native desktop by default.
+
+    discovr                                   open the native desktop (also on double-click)
+    discovr --scan-network 10.0.0.0/24        active network sweep
+    discovr --autoipaddr --intensity gentle   sweep the local subnet, gently
+    discovr --ad --domain corp.local --username me@corp.local      (password is prompted)
+    discovr --cloud aws|azure|gcp             cloud inventory with runtime credentials
+    discovr --passive                        observe the OS neighbour cache
+
+Heavy optional modules (cloud SDKs, LDAP) are imported inside their branches so
+startup stays fast for everything else.
+"""
 import argparse
+import json
+import getpass
+import logging
+import os
 import sys
 import time
-import ipaddress
-import platform
-import os
-import ctypes
 import warnings
-import logging
 
-# --------------------------
-# Suppress noisy warnings/logs
-# --------------------------
+from discovr import __version__
+from discovr.core import Exporter, Logger, Reporter
+
+# Third-party libraries are chatty; Discovr prints its own concise progress instead.
 warnings.filterwarnings("ignore")
-logging.getLogger("azure").setLevel(logging.WARNING)
-logging.getLogger("azure.identity").setLevel(logging.WARNING)
-logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
-logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 
-# Windows-specific for non-blocking input
-if platform.system() == "Windows":
+FORMATS = {"csv": ["csv"], "json": ["json"], "html": ["html"], "both": ["csv", "json"], "all": ["csv", "json", "html"]}
+SAVE_PROMPT_SECONDS = 15   # Windows interactive prompt: auto-save after this long
+
+_progress_open = False     # True while a "\r" progress line is waiting for its newline
+
+
+def print_progress(done, total, stage):
+    """Self-updating progress line on stderr (keeps stdout clean for piping).
+
+    Counted stages redraw one line and finish it with a newline at 100%; stages without
+    a count (total == 0) print once, so later log lines always start on a fresh line.
+    """
+    global _progress_open
+    if total:
+        finished = done >= total
+        sys.stderr.write(f"\r[~] {stage}: {done}/{total} ({done * 100 // total}%)" + ("\n" if finished else ""))
+        _progress_open = not finished
+    else:
+        sys.stderr.write(("\n" if _progress_open else "") + f"[~] {stage}...\n")
+        _progress_open = False
+    sys.stderr.flush()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """All command-line options (legacy flags kept so existing scripts keep working)."""
+    parser = argparse.ArgumentParser(prog="discovr", allow_abbrev=False, description="Discovr - asset discovery for networks, "
+                                     "Active Directory and cloud. Run without options to open the native desktop.")
+    parser.add_argument("--version", action="version", version=f"Discovr {__version__}")
+    parser.add_argument("--diagnostics", action="store_true", help="check bundled features offline and print JSON")
+    parser.add_argument("--licenses", action="store_true", help="print bundled third-party licence notices")
+
+    ui = parser.add_argument_group("native desktop")
+    ui.add_argument("--ui", action="store_true", help="open the native desktop (the default with no scan options)")
+
+    net = parser.add_argument_group("network discovery (no admin rights needed)")
+    net.add_argument("--scan-network", metavar="RANGE", help="CIDR, IP or comma-separated list, e.g. 192.168.1.0/24")
+    net.add_argument("--autoipaddr", action="store_true", help="scan the local subnet (auto-detected)")
+    net.add_argument("--ports", help="only probe these ports, e.g. 22,80,443 or 8000-8100")
+    net.add_argument("--intensity", choices=["gentle", "normal", "aggressive"], default="normal",
+                     help="load profile (default: normal); use gentle on sensitive networks")
+    net.add_argument("--parallel", type=int, metavar="N", help="max probes in flight (overrides --intensity)")
+
+    cloud = parser.add_argument_group("cloud discovery (credentials resolved at runtime)")
+    cloud.add_argument("--cloud", choices=["aws", "azure", "gcp"], help="cloud provider")
+    cloud.add_argument("--profile", help="AWS profile (default: the standard AWS credential chain)")
+    cloud.add_argument("--region", default="all", help="AWS region, or 'all' enabled regions (default: all)")
+    cloud.add_argument("--subscription", help="Azure subscription ID (default: every enabled subscription)")
+    cloud.add_argument("--project", help="GCP project ID (default: from the credentials)")
+    cloud.add_argument("--zone", help="GCP zone filter (default: all zones)")
+    cloud.add_argument("--gcp-credentials", metavar="KEY.json", help="GCP service-account key file (default: ADC)")
+
+    ad = parser.add_argument_group("Active Directory discovery")
+    ad.add_argument("--ad", action="store_true", help="enumerate computer accounts over LDAP")
+    ad.add_argument("--domain", help="AD domain, e.g. corp.local")
+    ad.add_argument("--username", help="e.g. user@corp.local or CORP\\user")
+    ad.add_argument("--password", help="avoid: visible in shell history - omit it to be prompted, "
+                                       "or set DISCOVR_AD_PASSWORD")
+    ad.add_argument("--dc", help="domain controller host/IP (default: resolve the domain name)")
+    ad.add_argument("--ldaps", action="store_true", help="bind over LDAPS/636 (default: StartTLS, else NTLM)")
+    ad.add_argument("--ca-file", metavar="PEM", help="domain CA certificate to verify the DC (default: system "
+                                                     "trust store; a DC that cannot be verified gets NTLM)")
+
+    passive = parser.add_argument_group("passive discovery (no packets sent)")
+    passive.add_argument("--passive", action="store_true", help="observe the OS neighbour cache without a capture driver")
+    passive.add_argument("--timeout", type=int, default=180, help="listening time in seconds (default: 180)")
+
+    out = parser.add_argument_group("reports")
+    out.add_argument("--save", choices=["yes", "no"], help="save results without asking")
+    out.add_argument("--format", choices=list(FORMATS), help="report format (default: both = CSV + JSON)")
+    out.add_argument("--out", metavar="DIR", help="report folder (default: Documents/discovr_reports) - "
+                                                  "e.g. a folder next to the binary on a USB stick")
+    return parser
+
+
+def ask_to_save_windows():
+    """Windows console prompt that auto-answers "yes" after 15 s (so unattended runs still save)."""
     import msvcrt
 
-from discovr.core import Logger, Exporter, Reporter
-from discovr.network import NetworkDiscovery
-from discovr.cloud import CloudDiscovery
-from discovr.active_directory import ADDiscovery
-from discovr.passive import PassiveDiscovery
-from discovr.gcp import GCPDiscovery
-
-
-def is_admin_windows():
-    """Check if Windows process is running with Administrator privileges"""
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
-        return False
-
-
-def detect_local_subnet():
-    """Detect local subnet using default gateway interface"""
-    try:
-        import netifaces
-        gateways = netifaces.gateways()
-        default_iface = gateways["default"][netifaces.AF_INET][1]
-        addrs = netifaces.ifaddresses(default_iface)[netifaces.AF_INET][0]
-        ip = addrs["addr"]
-        netmask = addrs["netmask"]
-        network = ipaddress.IPv4Network(f"{ip}/{netmask}", strict=False)
-        return str(network)
-    except Exception as e:
-        print(f"[!] Failed to auto-detect local subnet: {e}")
-        sys.exit(1)
-
-
-def show_privilege_hint(system, assets):
-    """Give OS-specific privilege hints only if not elevated"""
-    if not assets:
-        if system == "Windows" and not is_admin_windows():
-            print("[!] No assets discovered. Please try running again as Administrator on Windows for full functionality.")
-        elif system in ["Linux", "Darwin"] and os.geteuid() != 0:
-            print("[!] No assets discovered. Please try running again with sudo on macOS/Linux for full functionality.")
-        return
-
-    if system in ["Linux", "Darwin"] and os.geteuid() != 0:
-        print("[!] Please try running again with sudo on macOS/Linux for OS detection and full functionality.")
-
-    if system == "Windows" and not is_admin_windows():
-        failed_os = any("Unknown" in str(a.get("OS", "")) for a in assets)
-        if failed_os:
-            print("[!] Please try running again as Administrator on Windows for OS detection and full functionality.")
+    print("\nDo you want to save results? (yes/no): ", end="", flush=True)
+    start, buffer, warned = time.time(), "", set()
+    while True:
+        remaining = SAVE_PROMPT_SECONDS - int(time.time() - start)
+        if msvcrt.kbhit():
+            char = msvcrt.getwch()
+            if char == "\r":
+                print()
+                return buffer.strip().lower() in ("yes", "y")
+            if char == "\b":
+                buffer = buffer[:-1]
+                sys.stdout.write("\b \b")
+            else:
+                buffer += char
+                sys.stdout.write(char)
+            sys.stdout.flush()
+        if remaining <= 0:
+            print("\n[!] No response received. Automatically saving results.")
+            return True
+        if remaining in (10, 5) and remaining not in warned:
+            print(f"\n[!] Auto-saving results in {remaining} seconds...", flush=True)
+            warned.add(remaining)
+        time.sleep(0.1)
 
 
 def handle_export(assets, feature, timestamp, args):
-    """Handle saving results across platforms"""
+    """Save reports: --save/--format decide; otherwise Windows asks (with a countdown), others auto-save."""
     if not assets:
         return
+    if args.save == "no":
+        print("[+] Results not saved.")
+        return
+    wants_prompt = args.save is None and os.name == "nt" and sys.stdin.isatty()
+    if wants_prompt and not ask_to_save_windows():
+        print("[+] Results not saved.")
+        return
+    Exporter.save_results(assets, FORMATS[args.format or "both"], feature, timestamp, args.out)
 
-    system = platform.system()
 
-    # Linux / macOS
-    if system in ["Linux", "Darwin"]:
-        if args.save or args.format:
-            choice = args.save if args.save else "yes"
-            fmt = args.format if args.format else "both"
+def selected_feature(args):
+    """Which discovery the options ask for ("network", "cloud", "ad", "passive"), or None."""
+    choices = (("network", args.autoipaddr or args.scan_network), ("cloud", args.cloud),
+               ("ad", args.ad), ("passive", args.passive))
+    return next((name for name, chosen in choices if chosen), None)
+
+
+def run_scan(feature, args):
+    """Run one discovery; returns (assets, hosts_scanned, context label for the summary)."""
+    if feature == "network":
+        from discovr.network import NetworkDiscovery, local_subnet
+
+        target = args.scan_network
+        if args.autoipaddr:
+            try:
+                target = local_subnet()
+            except OSError as exc:
+                raise RuntimeError(f"Could not detect the local subnet (no network connection?): {exc}")
+            print(f"[+] Auto-detected local subnet: {target}")
+        scanner = NetworkDiscovery(target, args.ports, args.parallel, args.intensity)
+        assets, scanned, elapsed = scanner.run(on_progress=print_progress)
+        print(f"[+] Total execution time: {elapsed:.2f} seconds")
+        return assets, scanned, "active assets"
+
+    if feature == "cloud":
+        from discovr.cloud import CloudDiscovery
+
+        print(f"[+] Discovering {args.cloud.upper()} assets...")
+        scanner = CloudDiscovery(args.cloud, profile=args.profile, region=args.region, subscription=args.subscription,
+                                 project=args.project, zone=args.zone, credentials_file=args.gcp_credentials)
+        assets = scanner.run()
+        args.scan_incomplete = bool(getattr(scanner, "warnings", []))
+        return assets, len(assets), "cloud assets"
+
+    if feature == "ad":
+        from discovr.active_directory import ADDiscovery
+
+        if not (args.domain and args.username):
+            raise RuntimeError("AD discovery requires --domain and --username")
+        if args.password:
+            print("[!] --password is visible in shell history and the process list; omit it to be prompted.")
+        # Environment variable or interactive prompt keep the secret off the command line.
+        password = args.password or os.environ.get("DISCOVR_AD_PASSWORD") \
+            or getpass.getpass(f"Password for {args.username}: ")
+        print(f"[+] Discovering Active Directory assets in {args.domain}")
+        scanner = ADDiscovery(args.domain, args.username, password, dc=args.dc, use_ldaps=args.ldaps,
+                              ca_file=args.ca_file)
+        assets = scanner.run()
+        args.scan_incomplete = bool(getattr(scanner, "warnings", []))
+        return assets, len(assets), "AD assets"
+
+    from discovr.passive import PassiveDiscovery
+
+    print("[+] Running passive discovery")
+    assets, _ = PassiveDiscovery(timeout=args.timeout).run(on_progress=print_progress)
+    return assets, len(assets), "passive assets"
+
+
+def main(argv=None):
+    """Parse arguments, run a scan (or the native desktop) and save the report."""
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.licenses:
+        from pathlib import Path
+        path = Path(__file__).with_name("THIRD_PARTY_NOTICES.txt")
+        if not path.is_file():
+            print("Licence notices are generated when building the portable binary.")
         else:
-            if os.geteuid() != 0:
-                print("[!] Please run with sudo and use --save and --format")
-                print("    ; otherwise, results will be automatically saved in both CSV and JSON formats.")
-            choice = "yes"
-            fmt = "both"
-
-        if choice in ["yes", "y"]:
-            if fmt == "csv":
-                Exporter.save_results(assets, ["csv"], feature, timestamp)
-            elif fmt == "json":
-                Exporter.save_results(assets, ["json"], feature, timestamp)
-            else:
-                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
-        else:
-            print("[+] Results not saved.")
+            print(path.read_text(encoding="utf-8"))
+        return
+    if args.diagnostics:
+        from discovr.diagnostics import check_runtime
+        result = check_runtime()
+        print(json.dumps(result, indent=2))
+        if not result["ok"]:
+            sys.exit(1)
+        return
+    modes = [bool(args.scan_network or args.autoipaddr), bool(args.cloud), args.ad, args.passive, args.ui]
+    if sum(modes) > 1:
+        parser.error("select one discovery mode, or use --ui to run several scans")
+    if args.autoipaddr and args.scan_network:
+        parser.error("choose --autoipaddr or --scan-network, not both")
+    if args.timeout <= 0:
+        parser.error("--timeout must be a positive number of seconds")
+    feature = selected_feature(args)
+    if feature is None:
+        from discovr.desktop import main as desktop_main
+        if desktop_main([]):
+            sys.exit(1)
         return
 
-    # Windows
-    if system == "Windows":
-        if args.save == "no":
-            print("[+] Results not saved.")
-            return
-        elif args.save == "yes":
-            fmt = args.format if args.format else "both"
-            if fmt == "csv":
-                Exporter.save_results(assets, ["csv"], feature, timestamp)
-            elif fmt == "json":
-                Exporter.save_results(assets, ["json"], feature, timestamp)
-            else:
-                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
-            return
-
-        # Interactive + timeout
-        print("\nDo you want to save results? (yes/no): ", end="", flush=True)
-        start = time.time()
-        buffer = ""
-        warned10, warned5 = False, False
-
-        while True:
-            elapsed = time.time() - start
-            remaining = 15 - int(elapsed)
-
-            if msvcrt.kbhit():
-                char = msvcrt.getwch()
-                if char == "\r":  # Enter pressed
-                    print()
-                    break
-                elif char == "\b":
-                    buffer = buffer[:-1]
-                    sys.stdout.write("\b \b")
-                else:
-                    buffer += char
-                    sys.stdout.write(char)
-                    sys.stdout.flush()
-
-            if remaining <= 0:
-                print("\n[!] No response received. Automatically saving results in both formats.")
-                buffer = "yes"
-                break
-            elif remaining == 10 and not warned10:
-                print(f"\n[!] Auto-saving results in 10 seconds...", flush=True)
-                warned10 = True
-            elif remaining == 5 and not warned5:
-                print(f"\n[!] Auto-saving results in 5 seconds...", flush=True)
-                warned5 = True
-
-            time.sleep(0.1)
-
-        choice = buffer.strip().lower()
-        if choice in ["yes", "y"]:
-            fmt = args.format if args.format else "both"
-            if fmt == "csv":
-                Exporter.save_results(assets, ["csv"], feature, timestamp)
-            elif fmt == "json":
-                Exporter.save_results(assets, ["json"], feature, timestamp)
-            else:
-                Exporter.save_results(assets, ["csv", "json"], feature, timestamp)
-        else:
-            print("[+] Results not saved.")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Discovr - Asset Discovery Tool")
-
-    # Network
-    parser.add_argument("--scan-network", help="Network range (CIDR)")
-    parser.add_argument("--ports", help="Ports to scan (22,80,443)")
-    parser.add_argument("--parallel", type=int, default=1, help="Parallel workers")
-    parser.add_argument("--autoipaddr", action="store_true", help="Auto-detect subnet")
-
-    # Cloud
-    parser.add_argument("--cloud", choices=["aws", "azure", "gcp"], help="Cloud provider")
-    parser.add_argument("--subscription", help="Azure subscription ID")
-    parser.add_argument("--project", help="GCP project ID")
-    parser.add_argument("--zone", help="GCP zone")
-
-    # Active Directory
-    parser.add_argument("--ad", action="store_true", help="Active Directory discovery")
-    parser.add_argument("--domain", help="AD domain")
-    parser.add_argument("--username", help="AD username")
-    parser.add_argument("--password", help="AD password")
-
-    # Passive
-    parser.add_argument("--passive", action="store_true", help="Passive discovery")
-    parser.add_argument("--iface", help="Network interface")
-    parser.add_argument("--timeout", type=int, default=180, help="Passive timeout (seconds)")
-
-    # Export
-    parser.add_argument("--save", choices=["yes", "no"], help="Auto-save results")
-    parser.add_argument("--format", choices=["csv", "json", "both"], help="Export format")
-
-    args = parser.parse_args()
-
-    assets, feature, timestamp = [], None, None
-
     try:
-        if args.autoipaddr:
-            feature = "network"
-            log_file, timestamp = Logger.setup(feature)
-            network = detect_local_subnet()
-            print(f"[+] Auto-detected local subnet: {network}")
-            start = time.time()
-            scanner = NetworkDiscovery(network, args.ports, args.parallel)
-            assets, total_hosts, _ = scanner.run()
-            print(f"[+] Total execution time: {time.time() - start:.2f} seconds")
-            Reporter.print_results(assets, total_hosts, "active assets")
-
-        elif args.scan_network:
-            feature = "network"
-            log_file, timestamp = Logger.setup(feature)
-            start = time.time()
-            scanner = NetworkDiscovery(args.scan_network, args.ports, args.parallel)
-            assets, total_hosts, _ = scanner.run()
-            print(f"[+] Total execution time: {time.time() - start:.2f} seconds")
-            Reporter.print_results(assets, total_hosts, "active assets")
-
-        elif args.cloud:
-            feature = "cloud"
-            log_file, timestamp = Logger.setup(feature)
-            if args.cloud == "azure":
-                print(f"[+] Discovering Azure assets in subscription {args.subscription}")
-                scanner = CloudDiscovery("azure", subscription=args.subscription)
-                assets = scanner.run()
-            elif args.cloud == "gcp":
-                if not args.project or not args.zone:
-                    print("[!] GCP requires --project and --zone")
-                    sys.exit(1)
-                print(f"[+] Discovering GCP assets in project {args.project}, zone {args.zone}")
-                scanner = CloudDiscovery("gcp", project=args.project, zone=args.zone)
-                assets = scanner.run()
-            elif args.cloud == "aws":
-                print("[!] AWS discovery not yet implemented")
-            Reporter.print_results(assets, len(assets), "cloud assets")
-
-        elif args.ad:
-            feature = "ad"
-            log_file, timestamp = Logger.setup(feature)
-            if not (args.domain and args.username and args.password):
-                print("[!] AD discovery requires --domain, --username, --password")
-                sys.exit(1)
-            print(f"[+] Discovering Active Directory assets in {args.domain}")
-            scanner = ADDiscovery(args.domain, args.username, args.password)
-            assets = scanner.run()
-            Reporter.print_results(assets, len(assets), "AD assets")
-
-        elif args.passive:
-            feature = "passive"
-            log_file, timestamp = Logger.setup(feature)
-            print("[+] Running passive discovery")
-            scanner = PassiveDiscovery(iface=args.iface, timeout=args.timeout)
-            assets, total_assets = scanner.run()
-            Reporter.print_results(assets, len(assets), "passive assets")
-
-        else:
-            parser.print_help()
-            return
-
-    except Exception as e:
-        print(f"[!] Fatal error: {e}")
+        _, timestamp = Logger.setup(feature, args.out)
+        assets, scanned, context = run_scan(feature, args)
+    except KeyboardInterrupt:
+        sys.stderr.write("\n[!] Cancelled.\n")
+        sys.exit(130)
+    except Exception as exc:  # every failure ends as one readable line, not a traceback
+        if _progress_open:
+            sys.stderr.write("\n")
+        print(f"[!] Fatal error: {exc}")
         sys.exit(1)
 
-    if feature and timestamp:
+    try:
+        Reporter.print_results(assets, scanned, context)
         handle_export(assets, feature, timestamp, args)
+    except OSError as exc:
+        print(f"[!] Could not save the report: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if getattr(args, "scan_incomplete", False):
+        print("[!] Scan has incomplete coverage. Review the warnings and saved results.", file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

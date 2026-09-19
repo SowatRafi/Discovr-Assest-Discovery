@@ -44,7 +44,19 @@ env.bak/
 # -----------------------------
 build/
 dist/
+# Ignore throwaway PyInstaller specs, but keep the maintained build recipe.
 *.spec
+!discovr.spec
+
+# Test caches
+.pytest_cache/
+/tmp/
+
+# Local agent/tooling state (never part of the product)
+.claude-flow/
+.swarm/
+.claude/settings.local.json
+.claude/launch.json
 
 # Logs & Reports
 /logs
@@ -77,8 +89,7 @@ go.work.sum
 # -----------------------------
 # Docker
 # -----------------------------
-# Ignore Docker-related artifacts
-.dockerignore
+# Ignore local compose overrides (.dockerignore itself is part of the build and is committed)
 docker-compose.override.yml
 docker-compose.local.yml
 docker-compose.dev.yml

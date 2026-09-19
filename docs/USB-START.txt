@@ -1,0 +1,49 @@
+DISCOVR - READY TO RUN FROM YOUR USB DRIVE
+
+Copy this WHOLE folder to your USB drive once. Keep its contents together.
+Windows: double-click Discovr.exe.
+Linux: double-click Discovr (choose Run if your file manager asks).
+macOS: use the matching Mac download and double-click Discovr.app.
+
+Discovr opens its own native desktop window. No browser or website is used.
+No Python, nmap, capture driver, provider CLI, installer or command is required.
+Choose a discovery source, enter its details, and click Start discovery.
+For Network, click Use local subnet first, review the range, then Start discovery.
+Standard adds device details. Quick checks common services with less work.
+More scan options contains intensity and custom ports. Stop keeps results found.
+AD and cloud sources need your own authorised credentials.
+
+FIRST TIME? Choose Help / Explore sample inventory for a guided offline demo.
+Its 10 fictional assets are separate from your real inventory. Search, filter,
+inspect and export them freely. Every exported sample row is marked Demo.
+USER_GUIDE.md, REQUIREMENTS.md and API.md are included beside this file.
+
+Save inventory keeps every asset as JSON. Export view saves filtered results.
+CSV / HTML / JSON buttons export the visible rows directly. Import report reads
+those formats for offline conversion (HTML must be a new Discovr report).
+Select a device and choose Identify selected to refresh its OS/service evidence.
+Reset filters shows all rows. Clear results stops scans and empties the inventory
+after confirmation; saved report files are kept.
+Close the app window or choose File / Quit before ejecting the USB drive.
+Discovr offers to save unsaved inventory when you close it.
+
+The runtime loads directly from the folder or Mac app. No temporary extraction or
+symbolic-link support is needed. Startup and scans still depend on USB speed and
+the network.
+
+Optional single-file downloads are also available for Windows and Linux.
+They unpack into temporary storage on every launch and are slower to open.
+Choose the USB folder above for the fastest startup.
+
+Tools / Local API integration can enable an authenticated, local-only API for
+your integrations. It is disabled by default and does not provide a website.
+
+These builds are unsigned. Your operating system may ask for approval on first
+use. Linux must allow running applications from the USB drive. If needed, use
+the file manager's Properties / Permissions / Allow executing file option.
+A drive mounted with execution disabled needs an administrator policy change.
+Discovr cannot bypass those operating-system restrictions.
+
+Passive observation reads existing neighbour-cache entries. They may be stale,
+and devices missing from the cache will not appear. Network OS names are hints,
+not exact operating-system verification. No raw packet capture is included.

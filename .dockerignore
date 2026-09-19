@@ -1,0 +1,7 @@
+# Allowlist: the image only needs the dependency list and the package itself.
+# Everything else (.venv, dist/, .git, reports) would bloat and slow the build context.
+*
+!requirements.txt
+!requirements.lock
+!discovr/
+discovr/**/__pycache__

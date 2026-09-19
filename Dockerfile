@@ -1,24 +1,17 @@
-# 1. Start from lightweight Python image
-FROM python:3.11-slim
+# Discovr container image (CLI mode).
+# The native desktop needs a display; use headless CLI flags in the container, e.g.
+#   docker run --rm -v "$PWD/reports:/reports" discovr --scan-network 10.0.0.0/24 --save yes --out /reports
+FROM python:3.13-slim
 
-# 2. Install system dependencies (Nmap, Scapy dependencies, build tools)
-RUN apt-get update && apt-get install -y \
-    nmap \
-    tcpdump \
-    libpcap-dev \
-    build-essential \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
-# 3. Set working directory inside the container
 WORKDIR /app
+# Dependencies first so code changes do not invalidate the cached pip layer.
+COPY requirements.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+COPY discovr ./discovr
 
-# 4. Copy Discovr source code into the container
-COPY . /app
+# All discovery modes run as an unprivileged user.
+RUN useradd --create-home discovr
+USER discovr
 
-# 5. Install Python dependencies
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# 6. Default command (you can override when running)
-ENTRYPOINT ["python", "-m", "discovr.cli"]
+ENTRYPOINT ["python", "-m", "discovr"]
+CMD ["--help"]

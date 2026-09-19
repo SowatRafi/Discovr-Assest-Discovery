@@ -1,111 +1,62 @@
+"""Preliminary risk rating (Critical / High / Medium / Low) for discovered assets.
+
+This is a triage heuristic, not a vulnerability scan: it combines operating-system
+support status, exposed services and device role so the riskiest hosts surface first.
+Rules run from most to least severe and the first match wins.
+"""
+from discovr.tagger import Tagger, port_set
+
+# Past vendor end-of-support: no security patches at all.
+UNSUPPORTED_OS = ("windows xp", "windows vista", "windows 7", "windows 8", "server 2003",
+                  "server 2008", "server 2012", "centos linux", "centos 7", "centos-7",
+                  "centos 8", "centos-8")
+# Out of mainstream support; patched only with paid ESU (Windows 10 ended 14 Oct 2025).
+ENDING_OS = ("windows 10",)
+# Desktop OSes that are current and receive security updates.
+CURRENT_DESKTOP_OS = ("windows 11", "macos", "mac os", "darwin")
+
+CLEARTEXT_PORTS = {21, 23}                          # FTP, Telnet: credentials sent in cleartext
+REMOTE_ADMIN_PORTS = {3389, 5900, 5985, 5986}       # RDP, VNC, WinRM
+DATABASE_PORTS = {1433, 1521, 3306, 5432, 6379, 9200, 27017}
+FILE_SHARE_PORTS = {139, 445, 2049}                 # SMB/NetBIOS, NFS
+SENSITIVE_PORTS = CLEARTEXT_PORTS | REMOTE_ADMIN_PORTS | DATABASE_PORTS | FILE_SHARE_PORTS
+
+RISK_ORDER = ("Critical", "High", "Medium", "Low")
+
+
 class RiskAssessor:
+    """Rates assets so unsupported, exposed or unmanageable devices are triaged first."""
+
     @staticmethod
     def assess(asset: dict) -> str:
-        """
-        Assign a refined risk level based on:
-        - OS
-        - Open ports (Ports or OpenPorts)
-        - Tag
-        - NSG rules (for NetworkSecurityGroup assets)
-        """
-
-        asset_type = asset.get("Type", "").lower()
+        """Return the risk level for one asset (uses its Tag, computing it if missing)."""
         os_name = str(asset.get("OS", "")).lower()
-        tag = asset.get("Tag", "[Unknown]")
-        ports_field = asset.get("Ports") or asset.get("OpenPorts") or []
+        tag = asset.get("Tag") or Tagger.assign_tag(asset)
+        ports = port_set(asset.get("Ports"))
+        # Cloud discovery sets InternetExposed when a public IP meets a firewall rule allowing
+        # inbound traffic from anywhere; ExposedPorts lists just those ports (default: all ports).
+        exposed = bool(asset.get("InternetExposed"))
+        exposed_ports = port_set(asset.get("ExposedPorts", asset.get("Ports"))) if exposed else set()
 
-        # Normalize ports into a list of strings
-        if isinstance(ports_field, str):
-            ports = [p.strip() for p in ports_field.split(",") if p.strip()]
-        elif isinstance(ports_field, list):
-            ports = [str(p).strip() for p in ports_field if p]
-        else:
-            ports = []
-
-        # --- Helper categories ---
-        risky_ports = ["3389", "23", "445", "21"]   # RDP, Telnet, SMB, FTP
-        medium_ports = ["80", "443", "3306"]        # HTTP, HTTPS, MySQL
-
-        # --------------------------
-        # Network Security Group assessment
-        # --------------------------
-        if asset_type in ["networksecuritygroup", "nsg"]:
-            rules = asset.get("SecurityRules", [])
-            for rule in rules:
-                if rule.get("Direction", "").lower() == "inbound" and rule.get("Access", "").lower() == "allow":
-                    rule_ports = str(rule.get("Ports", ""))
-                    if rule_ports == "*" or rule.get("Source") in ["*", "Any"]:
-                        return "Critical"
-                    elif any(p in rule_ports for p in risky_ports):
-                        return "High"
-                    elif any(p in rule_ports for p in medium_ports):
-                        return "Medium"
-            return "Low"
-
-        # --------------------------
-        # VM / Host / Workstation / Server assessment
-        # --------------------------
-
-        # --- Critical OS versions ---
-        if any(old in os_name for old in ["windows xp", "windows vista", "windows 7", "server 2003", "server 2008"]):
+        if any(k in os_name for k in UNSUPPORTED_OS):
             return "Critical"
-
-        # --- IoT / Printer ---
-        if tag in ["[IoT]", "[Printer]"]:
+        if exposed_ports & SENSITIVE_PORTS:
+            return "Critical"  # admin, database or file-share service reachable from the internet
+        if exposed or ports & CLEARTEXT_PORTS or any(k in os_name for k in ENDING_OS):
             return "High"
-
-        # --- Mobile / Tablet ---
-        if tag in ["[Mobile]", "[Tablet]"]:
-            if any(p in ports for p in risky_ports):
-                return "High"
-            return "Medium"
-
-        # --- Workstations ---
+        if tag in ("[IoT]", "[Printer]"):
+            return "High"  # rarely patched and cannot host a security agent
+        if tag in ("[Workstation]", "[Mobile]", "[Tablet]", "[Network]") and ports & REMOTE_ADMIN_PORTS:
+            return "High"  # remote admin on endpoints/network gear is a common initial-access path
         if tag == "[Workstation]":
-            if "windows 7" in os_name or "vista" in os_name:
-                return "Critical"
-            if "windows 10" in os_name:
-                return "Medium"
-            if "windows 11" in os_name or "macos" in os_name or "darwin" in os_name:
-                return "Low"
-            if any(p in ports for p in risky_ports):
-                return "High"
-
-        # --- Servers ---
-        if tag == "[Server]":
-            if "server 2008" in os_name or "server 2003" in os_name:
-                return "Critical"
-            if any(p in ports for p in risky_ports):
-                return "High"
-            return "Medium"
-
-        # --- Network devices ---
-        if tag == "[Network]":
-            if any(p in ports for p in risky_ports):
-                return "High"
-            return "Medium"
-
-        # --- Web hosts ---
-        if tag == "[WebHost]":
-            if any(p in ports for p in medium_ports):
-                return "Medium"
-
-        # --- Unknown assets ---
-        if os_name == "unknown" or tag == "[Unknown]":
-            return "Medium"
-
-        # --- Escalate risk for ports if no other rule matched ---
-        if any(p in ports for p in risky_ports):
-            return "High"
-        elif any(p in ports for p in medium_ports):
-            return "Medium"
-
-        # --- Default fallback ---
+            return "Low" if any(k in os_name for k in CURRENT_DESKTOP_OS) else "Medium"
+        if tag in ("[Server]", "[Network]", "[WebHost]", "[Mobile]", "[Tablet]", "[Unknown]"):
+            return "Medium"  # high-value, externally facing, or simply not identifiable
         return "Low"
 
     @staticmethod
     def add_risks(assets: list) -> list:
-        """Add Risk field to all assets"""
+        """Add the Risk field to every asset in place and return the same list."""
         for asset in assets:
             asset["Risk"] = RiskAssessor.assess(asset)
         return assets

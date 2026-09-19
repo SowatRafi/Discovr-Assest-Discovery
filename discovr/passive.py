@@ -1,116 +1,47 @@
-import logging
-import platform
-from scapy.all import sniff, ARP, DNS, DNSQR, BOOTP, DHCP, UDP, get_if_list
+"""Observe existing OS neighbour entries without sending packets or loading drivers.
 
-# Windows-only helper for friendly names
-try:
-    from scapy.arch.windows import get_windows_if_list
-except ImportError:
-    get_windows_if_list = None
+Cached entries may be stale. Devices absent from the cache cannot be found here.
+"""
+import logging
+import time
+
+log = logging.getLogger(__name__)
 
 
 class PassiveDiscovery:
-    def __init__(self, iface=None, count=0, timeout=180):
-        """
-        :param iface: Network interface
-            - Linux/Mac: 'eth0', 'wlan0', 'en0'
-            - Windows: friendly name (e.g., 'Wi-Fi', 'Ethernet')
-        :param count: Number of packets to capture (0 = unlimited until timeout/Ctrl+C)
-        :param timeout: Duration in seconds (default: 180 = 3 minutes)
-        """
-        self.iface = iface
-        self.count = count
+    """Stream IP/MAC observations using only facilities supplied by the OS."""
+
+    def __init__(self, timeout=180):
         self.timeout = timeout
-        self.assets = {}
+        self.devices = {}
 
-    def _list_interfaces(self):
-        """Return list of interfaces cross-platform."""
-        if platform.system() == "Windows" and get_windows_if_list:
-            return get_windows_if_list()
-        else:
-            return get_if_list()
+    def run(self, on_progress=None, on_asset=None, cancel=None):
+        """Return (assets, count); Stop interrupts the delay between cache reads."""
+        from discovr.network import read_arp_cache
 
-    def _select_iface(self):
-        """Interactive interface selection if none is provided."""
-        ifaces = self._list_interfaces()
-        print("[+] Available interfaces:")
-
-        if platform.system() == "Windows" and get_windows_if_list:
-            for idx, iface in enumerate(ifaces, start=1):
-                print(f"    [{idx}] {iface['name']} ({iface['description']})")
-            choice = input("\nSelect interface by number: ").strip()
-            try:
-                idx = int(choice)
-                if 1 <= idx <= len(ifaces):
-                    return ifaces[idx - 1]["name"]
-            except ValueError:
-                pass
-        else:
-            for idx, iface in enumerate(ifaces, start=1):
-                print(f"    [{idx}] {iface}")
-            choice = input("\nSelect interface by number: ").strip()
-            try:
-                idx = int(choice)
-                if 1 <= idx <= len(ifaces):
-                    return ifaces[idx - 1]
-            except ValueError:
-                pass
-
-        print("[!] Invalid choice.")
-        return None
-
-    def _process_packet(self, packet):
-        ip, hostname = None, None
-
-        # ARP packets (discover IP ↔ MAC mappings)
-        if packet.haslayer(ARP) and packet[ARP].psrc:
-            ip = packet[ARP].psrc
-            hostname = f"MAC-{packet[ARP].hwsrc}"
-
-        # DNS queries
-        elif packet.haslayer(DNS) and packet.haslayer(DNSQR):
-            hostname = packet[DNSQR].qname.decode("utf-8") if packet[DNSQR].qname else None
-
-        # DHCP traffic (devices asking for IPs)
-        elif packet.haslayer(BOOTP) and packet.haslayer(DHCP):
-            ip = packet[BOOTP].yiaddr if packet[BOOTP].yiaddr != "0.0.0.0" else None
-            hostname = f"DHCP-{packet[BOOTP].chaddr.hex()}"
-
-        # mDNS traffic (multicast DNS — IoT, printers, smart TVs)
-        elif packet.haslayer(UDP) and packet[UDP].dport == 5353 and packet.haslayer(DNSQR):
-            hostname = packet[DNSQR].qname.decode("utf-8") if packet[DNSQR].qname else "mDNS-device"
-
-        if ip or hostname:
-            key = ip or hostname
-            if key not in self.assets:
-                self.assets[key] = {
-                    "IP": ip or "N/A",
-                    "Hostname": hostname or "Unknown",
-                    "OS": "Unknown",
-                    "Ports": "N/A"
-                }
-                logging.info(
-                    f"    [+] Passive Discovery Found: {self.assets[key]['IP']} ({self.assets[key]['Hostname']})"
-                )
-
-    def run(self):
-        if not self.iface:
-            self.iface = self._select_iface()
-            if not self.iface:
-                return [], 0
-
-        print(f"[+] Starting passive discovery on interface: {self.iface}")
-        print(f"[+] Listening for ARP, DNS, DHCP, and mDNS traffic (auto-stop after {self.timeout} seconds or Ctrl+C)...\n")
-
+        start = time.monotonic()
         try:
-            sniff(
-                prn=self._process_packet,
-                iface=self.iface,
-                count=self.count,
-                timeout=self.timeout,
-                store=0
-            )
+            while time.monotonic() - start < self.timeout:
+                if cancel is not None and cancel.is_set():
+                    break
+                for ip, mac in read_arp_cache().items():
+                    asset = {"IP": ip, "MAC": mac, "Hostname": "Unknown", "OS": "Unknown",
+                             "Ports": "N/A", "Source": "Passive",
+                             "SeenVia": "OS neighbour cache (may be stale)"}
+                    # Preserve multiple IPs observed for the same hardware address.
+                    key = (mac, ip)
+                    if self.devices.get(key) != asset:
+                        self.devices[key] = asset
+                        if on_asset:
+                            on_asset(dict(asset))
+                if on_progress:
+                    on_progress(int(time.monotonic() - start), self.timeout, "Watching OS neighbour cache")
+                delay = min(1, max(0, self.timeout - (time.monotonic() - start)))
+                if cancel is not None:
+                    cancel.wait(delay)
+                else:
+                    time.sleep(delay)
         except KeyboardInterrupt:
-            print("\n[+] Stopping passive discovery...")
-
-        return list(self.assets.values()), len(self.assets)
+            log.info("[+] Stopped watching the neighbour cache")
+        assets = list(self.devices.values())
+        return assets, len(assets)

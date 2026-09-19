@@ -1,45 +1,26 @@
-from discovr.azure import AzureDiscovery
-from discovr.gcp import GCPDiscovery
-# from discovr.aws import AWSDiscovery  # Placeholder if AWS logic is split into its own module
+"""Cloud dispatcher: one entry point for AWS, Azure and GCP discovery.
+
+Provider modules are imported only when selected, so a network-only run never pays
+the import cost of boto3 or azure-identity.
+"""
 
 
-class CloudDiscovery:
-    def __init__(self, provider, profile=None, region=None, subscription=None, project=None, zone=None):
-        """
-        Initialize the Cloud Discovery dispatcher.
-        :param provider: "aws", "azure", "gcp"
-        :param profile: AWS profile name
-        :param region: AWS region
-        :param subscription: Azure subscription ID
-        :param project: GCP project ID
-        :param zone: GCP zone
-        """
-        self.provider = provider
-        self.profile = profile
-        self.region = region
-        self.subscription = subscription
-        self.project = project
-        self.zone = zone
+def CloudDiscovery(provider, profile=None, region=None, subscription=None, project=None, zone=None,
+                   credentials_file=None, runtime_credentials=None):
+    """Return the discovery object (with a .run() method) for "aws", "azure" or "gcp".
 
-    def run(self):
-        """
-        Dispatch to the correct cloud provider discovery.
-        """
-        if self.provider == "azure":
-            if not self.subscription:
-                raise Exception("Azure discovery requires --subscription <id>")
-            azure_scanner = AzureDiscovery(self.subscription)
-            return azure_scanner.run()
+    Kept as a CamelCase factory so existing `CloudDiscovery(...).run()` callers keep working.
+    """
+    if provider == "aws":
+        from discovr.aws import AWSDiscovery
 
-        elif self.provider == "gcp":
-            if not self.project or not self.zone:
-                raise Exception("GCP discovery requires --project and --zone")
-            gcp_scanner = GCPDiscovery(self.project, self.zone)
-            return gcp_scanner.run()
+        return AWSDiscovery(profile=profile, region=region or "all", runtime_credentials=runtime_credentials)
+    if provider == "azure":
+        from discovr.azure import AzureDiscovery
 
-        elif self.provider == "aws":
-            # Future expansion: move AWS-specific discovery here
-            raise NotImplementedError("AWS discovery not yet separated into its own module")
+        return AzureDiscovery(subscription=subscription, runtime_credentials=runtime_credentials)
+    if provider == "gcp":
+        from discovr.gcp import GCPDiscovery
 
-        else:
-            raise Exception(f"Unsupported cloud provider: {self.provider}")
+        return GCPDiscovery(project=project, zone=zone, credentials_file=credentials_file)
+    raise ValueError(f"Unsupported cloud provider: {provider}")
