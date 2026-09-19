@@ -9,7 +9,8 @@ from discovr.session import BadRequest, Session
 @pytest.mark.parametrize("fmt,writer", [("json", to_json), ("csv", to_csv), ("html", to_html)])
 def test_report_roundtrip(fmt, writer, tmp_path):
     asset = {"IP": "192.0.2.1", "Hostname": "</script><img src=x onerror=alert(1)>",
-             "OS": "Linux", "Ports": "22,443", "InternetExposed": False, "Demo": True}
+             "OS": "Linux", "Ports": "22,443", "InternetExposed": False, "Demo": True,
+             "PortsChecked": 44, "TCPResponses": 0}
     path = tmp_path / ("report." + fmt)
     path.write_text(writer([asset]), encoding="utf-8")
     report = read_report(path)
@@ -24,6 +25,7 @@ def test_report_roundtrip(fmt, writer, tmp_path):
 @pytest.mark.parametrize("fmt,body", [("html", "<script>alert(1)</script>"),
                                      ("csv", "IP,IP\n192.0.2.1,x"),
                                      ("csv", "IP,OS\n192.0.2.1,Linux,unexpected"),
+                                     ("csv", "IP,TCPResponses\n192.0.2.1,invalid"),
                                      ("csv", "IP,InternetExposed\n192.0.2.1,maybe")])
 def test_malformed_conversion_is_rejected(fmt, body, tmp_path):
     path = tmp_path / ("invalid." + fmt)

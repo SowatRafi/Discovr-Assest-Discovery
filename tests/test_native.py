@@ -93,6 +93,13 @@ def test_missing_port_results_are_distinguished(window):
         "Not checked", "No TCP response", "No open ports found"]
 
 
+def test_csv_conversion_keeps_silent_port_status(window, tmp_path):
+    path = tmp_path / "silent.csv"
+    path.write_text("IP,Ports,PortsChecked,TCPResponses\n192.0.2.9,None,44,0\n")
+    window.import_path(path)
+    assert window.model.data(window.model.index(0, window.model.columns.index("Ports"))) == "No TCP response"
+
+
 @pytest.fixture(scope="module")
 def app():
     return QApplication.instance() or QApplication(["Discovr tests"])

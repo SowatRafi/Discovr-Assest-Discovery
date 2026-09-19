@@ -97,6 +97,20 @@ def test_gateway_parsing_across_platforms():
     assert parse_gateways("route to: default\n gateway: 192.0.2.1\n interface: en0", "darwin") == {"192.0.2.1"}
 
 
+def test_ssdp_proves_cached_host_is_present_even_when_tcp_is_silent(monkeypatch):
+    async def probe(*args):
+        return None
+    async def ssdp(*args):
+        return "OpenWrt/23.05 UPnP/1.1 router/1"
+    monkeypatch.setattr("discovr.network.probe", probe)
+    monkeypatch.setattr("discovr.network.ssdp_identity", ssdp)
+    monkeypatch.setattr("discovr.network.read_arp_cache", lambda: {"192.0.2.9": "00:11:22:33:44:55"})
+    monkeypatch.setattr("discovr.network.socket.gethostbyaddr", lambda ip: ("Unknown", [], []))
+    rows, _, _ = NetworkDiscovery("192.0.2.9").run()
+    assert rows[0]["SeenVia"] == "SSDP response" and rows[0]["OS"] == "OpenWrt Linux (guessed)"
+    assert "offline" not in rows[0]["PortStatus"] and rows[0]["TCPResponses"] == 0
+
+
 def test_ssdp_unicast_response_only_reads_server_metadata():
     async def run():
         loop = asyncio.get_running_loop()

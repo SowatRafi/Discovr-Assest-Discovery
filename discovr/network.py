@@ -405,6 +405,7 @@ class NetworkDiscovery:
             evidence = "; ".join(v for v in (banners.get(ip), services.get(ip), ssdp.get(ip)) if v)
             os_name = guess_os(ports, evidence)
             stopped = cancel is not None and cancel.is_set()
+            present = is_local(ip, local_addresses) or bool(ssdp.get(ip))
             asset = {
                 "IP": ip,
                 "Hostname": hostnames.get(ip, "Unknown"),
@@ -413,12 +414,13 @@ class NetworkDiscovery:
                 "MAC": macs.get(ip, "N/A"),
                 "Source": "Network",
                 "ScanDepth": self.depth,
-                "SeenVia": "TCP response" if answers[ip] else "OS neighbour cache (may be stale)",
+                "SeenVia": "TCP response" if answers[ip] else "SSDP response" if ssdp.get(ip) else "OS neighbour cache (may be stale)",
                 "DiscoveryStatus": "Stopped early" if stopped else "Finished",
                 "PortsChecked": checked[ip], "TCPResponses": answers[ip],
                 "PortStatus": ("Stopped before all ports were checked" if stopped else
                                f"{len(ports)} open / {checked[ip]} TCP ports checked" if answers[ip] else
-                               f"No TCP response / {checked[ip]} ports checked; may be filtered or offline"),
+                               f"No TCP response / {checked[ip]} ports checked; " +
+                               ("TCP may be filtered" if present else "may be filtered or offline")),
                 "OSConfidence": "Service hint" if evidence and guess_os(set(), evidence) != "Unknown" else
                                 "Port hint" if os_name != "Unknown" else "Unidentified",
                 "OSEvidence": evidence if os_name != "Unknown" and evidence else

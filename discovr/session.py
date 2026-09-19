@@ -216,13 +216,16 @@ class Session:
             raise BadRequest("Import is limited to 65,536 assets")
         scalars = {"IP", "MAC", "Hostname", "OS", "Source", "Cloud", "InstanceID", "AccountID",
                    "SubscriptionID", "ProjectID", "Region", "Zone", "Ports", "ExposedPorts"}
-        booleans = {"InternetExposed", "Enabled", "Stale", "DomainController"}
+        booleans = {"InternetExposed", "Enabled", "Stale", "DomainController", "LocalHost", "Demo"}
         for asset in raw:
             for key, value in asset.items():
                 if key in scalars and value is not None and not isinstance(value, str):
                     raise BadRequest(f"{key} must be text")
                 if key in booleans and value is not None and not isinstance(value, bool):
                     raise BadRequest(f"{key} must be true or false")
+                if key in {"PortsChecked", "TCPResponses"} and value is not None and (
+                        type(value) is not int or not 0 <= value <= 65535):
+                    raise BadRequest(f"{key} must be a number from 0 to 65535")
         clean = [{str(k)[:100]: v for k, v in a.items() if not str(k).startswith("_")} for a in raw]
         with self.lock:
             if self.closed:

@@ -66,6 +66,16 @@ def read_report(path):
                     row[key] = None
                 else:
                     raise BadRequest(f"{key} must be Yes/No or true/false")
+            for key in {"PortsChecked", "TCPResponses"} & row.keys():
+                # A CSV "0" is truthy in Python. Preserve numerical meaning so
+                # a silent device cannot turn into a responding host on import.
+                value = row[key].strip()
+                if not value:
+                    row[key] = None
+                elif value.isdecimal() and len(value) <= 5 and int(value) <= 65535:
+                    row[key] = int(value)
+                else:
+                    raise BadRequest(f"{key} must be a number from 0 to 65535")
             rows.append(row)
             if len(rows) > 65536:
                 raise BadRequest("Import is limited to 65,536 assets")
