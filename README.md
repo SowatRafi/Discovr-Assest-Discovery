@@ -54,8 +54,8 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 
 Everything Discovr needs is bundled. No Python, nmap, packet-capture driver or provider CLI
 needs installing. Keep the runtime files next to the launcher. The app loads them directly
-from the drive on Windows/Linux. The Mac app carries its runtime inside the executable
-and unpacks it to the Mac's temporary storage, avoiding symbolic links on the USB drive.
+from the drive on every platform. The Mac app uses a small native launcher with its
+bundled runtime inside the app, without symbolic links or per-launch extraction.
 Startup and scan duration still depend on USB speed, operating-system checks and the network.
 
 The apps are unsigned. Windows/macOS may require first-run approval through their normal

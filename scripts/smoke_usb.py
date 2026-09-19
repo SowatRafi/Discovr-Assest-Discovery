@@ -29,7 +29,7 @@ def main():
         archive = args.archive.resolve()
         if sys.platform == "darwin":
             subprocess.run(["/usr/bin/ditto", "-x", "-k", str(archive), str(folder)], check=True)
-            binary = folder / "Discovr/Discovr.app/Contents/MacOS/Discovr"
+            binary = folder / "Discovr/Discovr.app/Contents/Resources/runtime/Discovr"
         elif os.name == "nt":
             with zipfile.ZipFile(archive) as package:
                 package.extractall(folder)
@@ -84,8 +84,8 @@ def main():
                     safe_log = re.sub(r"#token=[\w-]+", "#token=[redacted]", output.read())
                     raise AssertionError("Dashboard did not start: " + safe_log)
                 elapsed = time.monotonic() - started
-                if sys.platform != "darwin":
-                    assert Path(startup["runtime"]).resolve().is_relative_to(folder.resolve()), "Runtime was extracted elsewhere"
+                assert Path(startup["runtime"]).resolve().is_relative_to(folder.resolve()), "Runtime was extracted elsewhere"
+                assert elapsed < 15, f"Dashboard startup exceeded the 15-second CI budget: {elapsed:.2f}s"
                 print(f"Dashboard ready in {elapsed:.2f}s from the USB app")
                 port, token = int(match[1]), match[2]
 

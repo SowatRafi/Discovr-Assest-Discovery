@@ -4,7 +4,7 @@
 
 - Ship USB app folders with a Windows GUI launcher, a macOS app bundle, and a dashboard Quit button.
 - Remove nmap integration, raw capture and Scapy; no optional install requirements remain.
-- Load the Windows/Linux runtime in place; package macOS as a USB-compatible app bundle.
+- Load the runtime in place on every OS, with a native macOS launcher; gate startup time in CI.
 
 - Add driver-free passive neighbour-cache observation and dashboard AWS/Azure credentials.
 - Keep overlapping cloud private addresses separate using provider resource identities.

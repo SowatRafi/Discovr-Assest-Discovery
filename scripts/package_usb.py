@@ -1,6 +1,8 @@
 """Archive USB apps with regular files so FAT/exFAT do not need symlink support."""
 import argparse
 from pathlib import Path
+import platform
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -19,12 +21,27 @@ def main():
             folder = Path(temporary) / "Discovr"
             folder.mkdir()
             app = folder / "Discovr.app"
-            # The single-executable app bundle has no framework/resource symlinks,
-            # so it can be copied onto common flash-drive filesystems unchanged.
-            shutil.copytree("dist/Discovr.app", app, symlinks=False)
+            contents = app / "Contents"
+            macos = contents / "MacOS"
+            macos.mkdir(parents=True)
+            # Keep the ordinary frozen folder under Resources. Frameworks requires
+            # symbolic links and rejects distribution metadata as nested code bundles.
+            shutil.copytree("dist/Discovr", contents / "Resources/runtime", symlinks=False)
+            with (contents / "Info.plist").open("wb") as output_plist:
+                plistlib.dump({"CFBundleName": "Discovr", "CFBundleExecutable": "Discovr",
+                               "CFBundleIdentifier": "org.discovr.desktop", "CFBundlePackageType": "APPL",
+                               "CFBundleShortVersionString": "2.1.0", "CFBundleVersion": "2.1.0",
+                               "LSUIElement": True, "NSHighResolutionCapable": True,
+                               "LSMinimumSystemVersion": "14.0" if platform.machine() == "arm64" else "15.0"},
+                              output_plist)
+            subprocess.run(["/usr/bin/clang", "-fobjc-arc", "-framework", "Cocoa",
+                            "scripts/macos_launcher.m", "-o", str(macos / "Discovr")], check=True)
+            # Runtime Mach-O files already carry PyInstaller's ad-hoc signatures.
+            # Seal the native launcher and its resources without re-signing nested data.
+            subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True)
             shutil.copy2("docs/USB-START.txt", folder / "START HERE.txt")
             shutil.copy2("build/THIRD_PARTY_NOTICES.txt", folder / "THIRD_PARTY_NOTICES.txt")
-            subprocess.run(["/usr/bin/codesign", "--verify", "--deep", str(app)], check=True)
+            subprocess.run(["/usr/bin/codesign", "--verify", str(app)], check=True)
             subprocess.run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent",
                             str(folder), str(output)], check=True)
     else:

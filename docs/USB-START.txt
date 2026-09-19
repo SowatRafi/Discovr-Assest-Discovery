@@ -13,9 +13,9 @@ AD and cloud sources need your own authorised credentials.
 Export any results you want to keep. Click Quit in the dashboard before ejecting
 the USB drive. Closing a browser tab alone does not stop the application.
 
-On Windows/Linux, the runtime loads directly from this folder. The Mac app unpacks
-its bundled runtime to the Mac's temporary storage. No files on the USB drive need
-symbolic-link support. Startup and scans still depend on USB speed and the network.
+The runtime loads directly from the folder or Mac app. No temporary extraction or
+symbolic-link support is needed. Startup and scans still depend on USB speed and
+the network.
 
 These builds are unsigned. Your operating system may ask for approval on first
 use. Linux must allow running applications from the USB drive. If needed, use
