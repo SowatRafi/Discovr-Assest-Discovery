@@ -54,7 +54,8 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 
 Everything Discovr needs is bundled. No Python, nmap, packet-capture driver or provider CLI
 needs installing. Keep the runtime files next to the launcher. The app loads them directly
-from the drive, avoiding the previous single-file extraction step on every launch.
+from the drive on Windows/Linux. The Mac app carries its runtime inside the executable
+and unpacks it to the Mac's temporary storage, avoiding symbolic links on the USB drive.
 Startup and scan duration still depend on USB speed, operating-system checks and the network.
 
 The apps are unsigned. Windows/macOS may require first-run approval through their normal
@@ -258,5 +259,5 @@ the network owner first, and prefer `--intensity gentle` or passive mode on frag
 ## License
 
 [MIT](LICENSE). Bundled third-party libraries retain their own licences, including ldap3
-under LGPL-3.0. The USB folder includes `THIRD_PARTY_NOTICES.txt` with exact package versions
-and upstream source links. In the Mac app, this file is in `Contents/Resources/discovr`.
+under LGPL-3.0. Every USB folder includes `THIRD_PARTY_NOTICES.txt` with exact package versions
+and upstream source links.

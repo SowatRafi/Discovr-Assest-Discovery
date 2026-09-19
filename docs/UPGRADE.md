@@ -9,7 +9,9 @@ targets macOS on Intel and Apple silicon.
 The USB package bundles Python and its dependencies in a ready-to-run folder (a `.app`
 bundle on macOS). Double-click the launcher; no separately installed runtime is used.
 PyInstaller's [one-folder model](https://pyinstaller.org/en/stable/operating-mode.html)
-loads libraries directly from the drive, avoiding per-launch temporary extraction.
+loads libraries directly from the drive on Windows/Linux, avoiding per-launch extraction.
+The macOS app uses a single bundled executable: it extracts to the Mac's own temporary
+storage so its USB copy does not depend on filesystem support for framework symbolic links.
 A Go rewrite is not needed to meet the no-install requirement. Reconsider it only if
 measurements on target hardware justify replacing the working LDAP and cloud integrations.
 

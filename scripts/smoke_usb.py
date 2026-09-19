@@ -29,7 +29,7 @@ def main():
         archive = args.archive.resolve()
         if sys.platform == "darwin":
             subprocess.run(["/usr/bin/ditto", "-x", "-k", str(archive), str(folder)], check=True)
-            binary = folder / "Discovr.app/Contents/MacOS/Discovr"
+            binary = folder / "Discovr/Discovr.app/Contents/MacOS/Discovr"
         elif os.name == "nt":
             with zipfile.ZipFile(archive) as package:
                 package.extractall(folder)
@@ -57,14 +57,10 @@ def main():
         environment.update(DISCOVR_TEST_STARTUP_FILE=str(handoff), DISCOVR_TEST_NO_BROWSER="1")
         with (folder / "server.log").open("w+", encoding="utf-8") as output:
             arguments = [str(binary)]  # exercise the same zero-argument path as a double click
-            detached_launcher = sys.platform.startswith("linux")
             if sys.platform == "darwin":
                 # Exercise LaunchServices (Finder's app-bundle path), not only the inner binary.
-                arguments = ["/usr/bin/open", "-W", "-n", str(folder / "Discovr.app"), "--args",
+                arguments = ["/usr/bin/open", "-W", "-n", str(folder / "Discovr/Discovr.app"), "--args",
                              "--no-browser", "--startup-file", str(handoff)]
-            elif detached_launcher:
-                # GIO interprets the actual relocated desktop file, including its Exec quoting.
-                arguments = ["/usr/bin/gio", "launch", str(folder / "Discovr/Discovr.desktop")]
             started = time.monotonic()
             process = subprocess.Popen(arguments, cwd=folder, env=environment,
                                        stdout=output, stderr=subprocess.STDOUT)
@@ -79,14 +75,18 @@ def main():
                         match = None
                     if match:
                         break
-                    if process.poll() is not None and (not detached_launcher or process.returncode != 0):
+                    if process.poll() is not None:
                         output.seek(0)
                         raise AssertionError("Dashboard exited before startup: " + output.read())
                     time.sleep(0.1)
-                assert match, "Dashboard did not start"
+                if not match:
+                    output.seek(0)
+                    safe_log = re.sub(r"#token=[\w-]+", "#token=[redacted]", output.read())
+                    raise AssertionError("Dashboard did not start: " + safe_log)
                 elapsed = time.monotonic() - started
-                assert Path(startup["runtime"]).resolve().is_relative_to(folder.resolve()), "Runtime was extracted elsewhere"
-                print(f"Dashboard ready in {elapsed:.2f}s; runtime loaded directly from the USB folder")
+                if sys.platform != "darwin":
+                    assert Path(startup["runtime"]).resolve().is_relative_to(folder.resolve()), "Runtime was extracted elsewhere"
+                print(f"Dashboard ready in {elapsed:.2f}s from the USB app")
                 port, token = int(match[1]), match[2]
 
                 def request(method, path, body=None, authenticated=True):

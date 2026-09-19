@@ -20,6 +20,7 @@ from pathlib import Path
 notices = runpy.run_path(str(Path(SPECPATH) / "scripts" / "build_notices.py"))["collect_notices"](SPECPATH)
 
 AWS_SERVICES = {"ec2", "sts", "ssm", "sso", "sso-oidc"}
+MAC_APP = sys.platform == "darwin"
 
 
 def keep(dest):
@@ -48,8 +49,10 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries if MAC_APP else [],
+    a.datas if MAC_APP else [],
     [],
-    exclude_binaries=True,
+    exclude_binaries=not MAC_APP,
     name="Discovr",
     debug=False,
     bootloader_ignore_signals=False,
@@ -64,10 +67,12 @@ exe = EXE(
     entitlements_file=None,
 )
 
-# Loading libraries in place avoids one-file extraction on every USB launch.
-folder = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="Discovr")
-if sys.platform == "darwin":
-    app = BUNDLE(folder, name="Discovr.app", bundle_identifier="org.discovr.desktop",
+# Windows/Linux load libraries in place. A one-executable Mac app avoids framework
+# symlinks that cannot be copied to FAT/exFAT; it unpacks to the Mac's own temp disk.
+if MAC_APP:
+    app = BUNDLE(exe, name="Discovr.app", bundle_identifier="org.discovr.desktop",
                  info_plist={"CFBundleName": "Discovr", "CFBundleShortVersionString": "2.1.0",
                              "CFBundleVersion": "2.1.0", "LSUIElement": True,
                              "NSHighResolutionCapable": True})
+else:
+    folder = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="Discovr")
