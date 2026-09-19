@@ -7,7 +7,7 @@ connection needed for local discovery. Cloud discovery requires access to the pr
 
 [![build](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml?query=branch%3Amain)
 
-![Discovr native desktop](docs/screenshot.png)
+![Discovr native desktop](docs/demo/demo.png)
 
 ## Why Discovr
 
@@ -234,7 +234,27 @@ loopback scan, cancellation, filtering, export/import and window shutdown. Linux
 runs against Xvfb with the xcb desktop plugin; Windows and macOS use their own platform plugins. A `v*` tag prepares a **draft** release with SHA-256
 checksums for maintainer review. No public release is published automatically.
 
-See [requirements coverage](docs/REQUIREMENTS.md), [upgrade notes](docs/UPGRADE.md), and
+Use feature branches and pull requests. Keep customer inventories, credentials and local
+tooling out of Git; use the maintainer's identity without automated co-author trailers.
+
+When changing dependencies, regenerate the hash lock with Python 3.13 and pip-tools,
+review the diff, then run the tests, audit and all platform packaging checks:
+
+```bash
+pip-compile --generate-hashes --no-emit-index-url --no-emit-trusted-host --strip-extras --output-file requirements.lock requirements.txt
+pip-audit -r requirements.lock --disable-pip --no-deps
+```
+
+Intel macOS builds run `scripts/rebuild_macos_crypto.py` before packaging to link OpenSSL
+statically and avoid conflicting runtime libraries. Rust and Homebrew OpenSSL are build
+dependencies only. When updating Qt, refresh `scripts/update_qt_notices.py` and review the
+licence notices; Qt stays dynamically linked and replaceable.
+
+Before a signed general release, validate real AD paging/CA trust and cloud VM counts with
+authorised accounts, test the intended USB drives and OS policies, and sign/notarise the
+binaries with the owner's signing identities. Fixture tests do not establish live tenant access.
+
+See [requirements coverage](docs/REQUIREMENTS.md) and
 [performance/demo evidence](docs/DEMO_RESULTS.md) for scope, decisions, measurements and remaining release gates.
 
 ```
