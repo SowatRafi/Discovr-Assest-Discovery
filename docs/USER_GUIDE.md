@@ -22,7 +22,7 @@ assets. No real scan runs, and your real inventory remains separate.
 1. Click **Office devices · 6 assets** to see servers, laptops, a printer, camera and router.
 2. Click **Production · 2 cloud servers** to try environment grouping.
 3. Select an asset and press **Enter**, or double-click it, to inspect all evidence.
-4. Choose **Export view** and save CSV, JSON or HTML. Only visible rows are exported.
+4. Click **CSV**, **HTML** or **JSON** above the table. Only visible rows are exported.
 5. Click **Show all sample assets**, then **Save inventory** to save every sample as JSON.
 6. Close the sample window to return to real work. Every sample export carries `Demo: true`.
 
@@ -34,7 +34,7 @@ Expected sample results: **10 assets**, **6 agent capable**, **4 high/critical**
 1. Select **Network**, then **Use local subnet**. Review the range before starting. You can
    enter one IPv4 address, a CIDR such as `10.20.0.0/24`, or a comma-separated list.
 2. Keep **Standard** for richer device details, or choose **Quick** for ten common ports
-   without extended port probes or SSH banners. Both resolve names when available.
+   without extended port probes or service identification. Both resolve names when available.
 3. Optionally enter an **Environment label**, such as a client name or “Production”.
 4. For sensitive networks, open **More scan options** and select **Gentle**. Optional custom
    TCP ports replace the built-in list; blank means use the selected profile.
@@ -45,6 +45,33 @@ Expected sample results: **10 assets**, **6 agent capable**, **4 high/critical**
 The default-route subnet may be a VPN or only one of several interfaces. Review it; Discovr
 does not know every remote VLAN. Unknown OS/hostname fields are legitimate results.
 `SeenVia` distinguishes a TCP response from possibly stale neighbour-cache evidence.
+
+### Get more detail for a device
+
+Select a row and click **Identify selected**. This starts a Standard discovery for that one
+IPv4 address and updates its existing row. It is especially useful for older imports and
+neighbour-cache entries, which contain no port scan. Cloud rows use their provider source
+instead, because their private IPs can belong to a different network.
+
+Standard discovery checks 44 common TCP ports, SSH banners, up to three web-service
+descriptions, and one targeted UPnP discovery query per remote device. It never follows
+web redirects, logs in, changes UPnP settings or sends multicast searches. This computer's
+OS is read directly; its additional local TCP listeners are checked when the OS permits
+reading them. Default gateways are recognised from the OS routing table.
+
+Hover over **OS hint**, **Ports** or **Device type** for evidence; double-click for full
+details, including `PortsChecked`, `PortStatus`, `OSConfidence`, `OSEvidence` and `SSDPServer`.
+Remote OS names remain labelled **guessed**. A product's advertised description can be wrong.
+
+- **Not checked**: this record has no port-check evidence. Choose Identify selected.
+- **Checking… / Incomplete check**: work is still running or was stopped early.
+- **No open ports found**: the device answered, but none of the checked ports accepted a connection.
+- **No TCP response**: the checked ports did not answer; the device may be filtered or offline.
+- **Not identified**: no usable OS/device evidence was returned. Closed services and firewalls
+  can prevent identification. AD can supply an OS for managed computers.
+
+The default list does not cover every TCP port or all UDP services. Use **More scan options →
+TCP ports** for a known service outside it. Explicit custom ports skip the UPnP query.
 
 ## Other sources
 
@@ -64,11 +91,19 @@ an inventory as complete. Cloud exposure is an allow-rule estimate, not an exter
 ## Find and save assets
 
 - **Search** searches all fields. A valid CIDR such as `192.0.2.0/24` selects that IP range.
-- **Filters** combine risk, device type, source, agent capability and environment. **Reset** clears them.
+- **Filters** combine risk, device type, source, agent capability and environment. **Reset filters** shows all rows again.
+- **Clear results…** confirms, stops running scans and removes all rows, including hidden ones.
+  Late scan responses cannot put cleared rows back. Saved files and scan history are kept.
 - **Enter/double-click** opens full details, including metadata not shown in the table.
-- **Export view** writes only the currently visible rows as CSV, JSON or standalone HTML.
+- **CSV / HTML / JSON** buttons write the visible rows in that format. **Export view** also offers all three formats.
 - **Save inventory** writes every asset as JSON, even when filters hide some rows.
-- **Import JSON** merges a saved report; imports are limited to 32 MB and 65,536 records.
+- **Import report** reads CSV, JSON or Discovr HTML; imports are limited to 32 MB and 65,536 records.
+
+To **convert a report**, start with an empty inventory, click **Import report**, choose the file,
+then click the output format button. JSON and new Discovr HTML preserve structured metadata;
+CSV is a flat spreadsheet with explicit boolean conversion. HTML import requires a report
+exported by this version with its embedded conversion data; arbitrary websites and older HTML
+reports are not importable. No browser opens during conversion and no online converter is used.
 
 Keep unrelated LANs with overlapping IPs in separate inventories; an environment label does
 not change identity matching. Cloud identity is scoped by provider/account/project/region/resource.

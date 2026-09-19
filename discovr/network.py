@@ -9,8 +9,9 @@ This engine needs none of those:
      from a closed port). Plain TCP connects need no raw sockets, so no admin rights.
   2. Read the OS ARP cache: our connection attempts made the OS ARP for every local
      address, so hosts whose firewall drops all TCP still show up (with their MAC).
-  3. Probe live hosts on the extended port list, resolve names and grab SSH banners,
-     then guess the OS from what the host exposes.
+  3. Probe live hosts on the extended port list, resolve names and read bounded
+     SSH/HTTP/UPnP descriptions. Local OS facts and routing-table evidence supplement
+     remote hints; none requires a separately installed tool or packet driver.
 
 Intensity profiles bound concurrency and timeouts so sensitive networks can be
 scanned gently (brief: "configurable to avoid causing disruptions").
@@ -28,6 +29,8 @@ import time
 from collections import defaultdict
 from pathlib import Path
 from discovr.lookup import lookup_many
+from discovr.identification import (default_gateways, device_hint, http_identity, is_local,
+                                    local_identity, local_listener_ports, ssdp_identity)
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +49,9 @@ MAX_ADDRESSES = 65536  # one /16 per scan keeps runtime and memory predictable
 # SSH banner fragments that reveal the operating system (checked in order).
 BANNER_OS = (("windows", "Windows"), ("ubuntu", "Linux (Ubuntu)"), ("debian", "Linux (Debian)"),
              ("raspbian", "Linux (Raspberry Pi OS)"), ("freebsd", "FreeBSD"), ("cisco", "Cisco IOS"),
-             ("mikrotik", "MikroTik RouterOS"), ("dropbear", "Embedded Linux"))
+             ("mikrotik", "MikroTik RouterOS"), ("routeros", "MikroTik RouterOS"),
+             ("openwrt", "OpenWrt Linux"), ("dropbear", "Embedded Linux"),
+             ("linux", "Linux"), ("microsoft-iis", "Windows"))
 
 # ARP table lines: Linux /proc/net/arp (flags 0x0 = incomplete) and Windows `arp -a` / BSD `arp -an`.
 _ARP_LINUX = re.compile(r"^(\d+\.\d+\.\d+\.\d+)\s+0x\w+\s+0x[1-9a-f]\w*\s+([0-9a-f:]{17})", re.I | re.M)
@@ -297,8 +302,12 @@ class NetworkDiscovery:
 
     async def _scan(self, progress, emit, cancel):
         """The four scan phases; returns the final asset list."""
+        if cancel is not None and cancel.is_set():
+            return []
         alive, open_ports, macs = set(), defaultdict(set), {}
-        last_emit = {}
+        last_emit, checked, answers = {}, defaultdict(int), defaultdict(int)
+        local_addresses, computer = local_identity()
+        gateways = default_gateways()
 
         def partial(ip):
             # Never wait for a silent address to time out before showing a responsive one.
@@ -310,11 +319,14 @@ class NetworkDiscovery:
                       "MAC": macs.get(ip, "N/A"), "Source": "Network",
                       "SeenVia": "TCP response",
                       "Ports": ",".join(map(str, sorted(open_ports[ip]))) or "None",
-                      "DiscoveryStatus": "Scanning", "ScanDepth": self.depth})
+                      "DiscoveryStatus": "Scanning", "ScanDepth": self.depth,
+                      "PortsChecked": checked[ip], "PortStatus": "Checking TCP ports…"})
 
         def record(ip, port, state):
             """Store one probe result: any answer (open or refused) proves the host is up."""
+            checked[ip] += 1
             if state is not None:
+                answers[ip] += 1
                 alive.add(ip)
                 if state:
                     open_ports[ip].add(port)
@@ -334,11 +346,18 @@ class NetworkDiscovery:
             if ip in targets:
                 alive.add(ip)
                 macs[ip] = mac
+        # This computer is present even when its firewall drops every inbound probe.
+        if cancel is None or not cancel.is_set():
+            for ip in self.hosts:
+                if is_local(ip, local_addresses):
+                    alive.add(ip)
+                    macs[ip] = local_addresses.get(ip, "N/A")
         live = sorted(alive, key=_ip_key)
         for ip in live:  # early, partial rows so the UI fills up immediately
             emit({"IP": ip, "Hostname": "Unknown", "OS": "Unknown", "MAC": macs.get(ip, "N/A"),
                   "Ports": ",".join(map(str, sorted(open_ports[ip]))) or "None", "Source": "Network",
-                  "DiscoveryStatus": "Scanning", "ScanDepth": self.depth})
+                  "DiscoveryStatus": "Scanning", "ScanDepth": self.depth,
+                  "PortsChecked": checked[ip], "PortStatus": "Checking TCP ports…"})
 
         # Phase 3: extended ports on live hosts, with name lookups running alongside.
         names = asyncio.create_task(lookup_many(live, lambda ip: socket.gethostbyaddr(ip)[0], "Unknown", cancel))
@@ -346,34 +365,76 @@ class NetworkDiscovery:
             extra = [p for p in TOP_PORTS if p not in SWEEP_PORTS]
             await self._probe_many(((h, p) for h in live for p in extra), len(live) * len(extra),
                                    f"Fingerprinting {len(live)} live hosts", record, progress, cancel)
+            local_ips = [ip for ip in live if is_local(ip, local_addresses)]
+            candidates = local_listener_ports(local_ips) if local_ips else {}
+            pairs = [(ip, port) for ip, ports in candidates.items() for port in ports if port not in TOP_PORTS]
+            if pairs:
+                await self._probe_many(pairs, len(pairs), "Checking this computer's additional services",
+                                       record, progress, cancel)
         progress(0, 0, "Resolving names")
         hostnames = dict(zip(live, await names))
-        banners = {}
-        ssh_hosts = iter(ip for ip in live if 22 in open_ports[ip] and self.depth == "standard")
+        banners, services, ssdp = {}, {}, {}
+        identify_hosts = iter(live if self.depth == "standard" else [])
 
         async def read_banners():
-            for ip in ssh_hosts:
+            for ip in identify_hosts:
                 if cancel is not None and cancel.is_set():
                     return
-                banners[ip] = await ssh_banner(ip)
+                if 22 in open_ports[ip]:
+                    banners[ip] = await ssh_banner(ip, timeout=min(1.5, self.timeout))
+                details = []
+                # Limit work per host and across hosts. No probes go outside the target.
+                web_ports = [p for p in (80, 443, 8080, 8443, 8000, 5000, 631) if p in open_ports[ip]][:3]
+                for port in web_ports:
+                    if cancel is not None and cancel.is_set():
+                        break
+                    detail = await http_identity(ip, port)
+                    if detail:
+                        details.append(f"TCP {port}: {detail}")
+                services[ip] = "; ".join(details)
+                if not self.ports and not is_local(ip, local_addresses) and not (cancel and cancel.is_set()):
+                    ssdp[ip] = await ssdp_identity(ip)
 
         # Fingerprinting must obey a concurrency bound too, even for a full /16.
+        progress(0, 0, "Reading device and service details")
         await asyncio.gather(*(read_banners() for _ in range(min(32, self.concurrency))))
 
         assets = []
         for ip in live:
             ports = open_ports[ip]
+            evidence = "; ".join(v for v in (banners.get(ip), services.get(ip), ssdp.get(ip)) if v)
+            os_name = guess_os(ports, evidence)
+            stopped = cancel is not None and cancel.is_set()
             asset = {
                 "IP": ip,
                 "Hostname": hostnames.get(ip, "Unknown"),
-                "OS": guess_os(ports, banners.get(ip, "")),
+                "OS": os_name,
                 "Ports": ",".join(map(str, sorted(ports))) or "None",
                 "MAC": macs.get(ip, "N/A"),
                 "Source": "Network",
                 "ScanDepth": self.depth,
-                "SeenVia": "TCP response" if ip in last_emit else "OS neighbour cache (may be stale)",
-                "DiscoveryStatus": "Stopped early" if cancel is not None and cancel.is_set() else "Finished",
+                "SeenVia": "TCP response" if answers[ip] else "OS neighbour cache (may be stale)",
+                "DiscoveryStatus": "Stopped early" if stopped else "Finished",
+                "PortsChecked": checked[ip], "TCPResponses": answers[ip],
+                "PortStatus": ("Stopped before all ports were checked" if stopped else
+                               f"{len(ports)} open / {checked[ip]} TCP ports checked" if answers[ip] else
+                               f"No TCP response / {checked[ip]} ports checked; may be filtered or offline"),
+                "OSConfidence": "Service hint" if evidence and guess_os(set(), evidence) != "Unknown" else
+                                "Port hint" if os_name != "Unknown" else "Unidentified",
+                "OSEvidence": evidence if os_name != "Unknown" and evidence else
+                              "Open TCP ports: " + ", ".join(map(str, sorted(ports))) if os_name != "Unknown" else
+                              "No OS-identifying response. A firewall or a device hiding its OS can cause this.",
+                "ServiceDetails": services.get(ip, ""),
+                "SSDPServer": ssdp.get(ip, ""),
+                "UDPServices": "1900 (SSDP response)" if ssdp.get(ip) else "",
+                "DeviceHint": device_hint(evidence),
+                "DeviceEvidence": evidence,
             }
+            if ip in gateways:
+                asset.update(DeviceHint="Network", DeviceEvidence="Default gateway in this computer's routing table")
+            if is_local(ip, local_addresses):
+                asset.update(computer)
+                asset["SeenVia"] = "This computer's network interface" + ("; TCP response" if answers[ip] else "")
             if banners.get(ip):
                 asset["SSHBanner"] = banners[ip]
             log.info(f"    [+] Found: {ip} ({asset['Hostname']}) | OS: {asset['OS']} | Ports: {asset['Ports']}")

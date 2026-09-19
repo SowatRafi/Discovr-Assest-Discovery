@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from discovr import __version__
 from discovr.core import CORE_FIELDS, _cell_text, to_csv, to_html, to_json
 from discovr.session import BadRequest, Session, _ActivityHandler
+from discovr.core import is_blank
 
 SOURCES = [("Network", "network"), ("Neighbour cache", "passive"), ("Active Directory", "ad"),
            ("Amazon Web Services", "aws"), ("Microsoft Azure", "azure"), ("Google Cloud", "gcp")]
@@ -80,7 +81,28 @@ class InventoryModel(QAbstractTableModel):
         if not index.isValid():
             return None
         key = self.columns[index.column()]
-        value = self.assets[index.row()].get(key)
+        asset = self.assets[index.row()]
+        value = asset.get(key)
+        if role == Qt.ItemDataRole.ToolTipRole:
+            if key == "OS":
+                return asset.get("OSEvidence") or "No OS evidence in this record. Select the device and choose Identify selected to check its services."
+            if key == "Ports":
+                return asset.get("PortStatus") or ("Ports were not checked by this source. Use Identify selected for an active TCP check." if is_blank(value) else "Recorded ports; double-click for source and scan details.")
+            if key == "Tag":
+                return asset.get("DeviceEvidence") or "Device type is estimated from OS, hostname and services. Use Identify selected to gather more evidence."
+        if role == Qt.ItemDataRole.DisplayRole:
+            if key == "OS" and is_blank(value):
+                return "Not identified"
+            if key == "Tag":
+                return "Not identified" if value == "[Unknown]" else str(value or "Not identified").strip("[]")
+            if key == "Ports" and is_blank(value):
+                if asset.get("DiscoveryStatus") == "Scanning":
+                    return "Checking…"
+                if asset.get("DiscoveryStatus") == "Stopped early":
+                    return "Incomplete check"
+                if asset.get("PortsChecked"):
+                    return "No open ports found" if asset.get("TCPResponses") else "No TCP response"
+                return "Not checked"
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             return _cell_text(value) if value is not None else "Unknown"
         if role == Qt.ItemDataRole.ForegroundRole and key == "Risk":
@@ -257,17 +279,17 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
         for title, callback, shortcut in (
-            ("Import JSON…", self.import_dialog, QKeySequence.StandardKey.Open),
+            ("Import report…", self.import_dialog, QKeySequence.StandardKey.Open),
             ("Save inventory…", self.save_inventory, QKeySequence.StandardKey.Save),
             ("Export view…", self.export_dialog, "Ctrl+E"),
         ):
             action = self._action(title, callback, shortcut)
-            if self.demo and title == "Import JSON…":
+            if self.demo and title == "Import report…":
                 action.setEnabled(False)
             file_menu.addAction(action)
             toolbar.addAction(action)
         file_menu.addSeparator()
-        clear = self._action("Clear inventory…", self.clear_inventory)
+        clear = self._action("Clear results…", self.clear_inventory)
         clear.setEnabled(not self.demo)
         file_menu.addAction(clear)
         file_menu.addAction(self._action("Quit", self.close, QKeySequence.StandardKey.Quit))
@@ -506,16 +528,39 @@ class MainWindow(QMainWindow):
             combo.currentIndexChanged.connect(self.apply_filters)
             self.filters[key] = combo
             row.addWidget(combo, index // 3, index % 3)
-        reset = QPushButton("Reset")
-        reset.clicked.connect(self.reset_filters)
-        row.addWidget(reset, 1, 2)
+        self.reset_filters_button = QPushButton("Reset filters")
+        self.reset_filters_button.clicked.connect(self.reset_filters)
+        row.addWidget(self.reset_filters_button, 1, 2)
         layout.addLayout(row)
+        actions = QHBoxLayout()
+        self.identify_button = QPushButton("Identify selected")
+        self.identify_button.setToolTip("Check this device's common TCP ports, OS and service hints using a Standard scan.")
+        self.identify_button.clicked.connect(self.identify_selected)
+        actions.addWidget(self.identify_button)
+        self.clear_results_button = QPushButton("Clear results…")
+        self.clear_results_button.setEnabled(not self.demo)
+        self.clear_results_button.clicked.connect(self.clear_inventory)
+        actions.addWidget(self.clear_results_button)
+        actions.addStretch()
+        actions.addWidget(plain_label("Export:"))
+        self.export_buttons = {}
+        for fmt in ("csv", "html", "json"):
+            button = QPushButton(fmt.upper())
+            button.setAccessibleName(f"Export visible results as {fmt.upper()}")
+            button.setToolTip(f"Save the currently visible results as {fmt.upper()}")
+            button.clicked.connect(lambda checked=False, fmt=fmt: self.export_dialog(fmt))
+            actions.addWidget(button)
+            self.export_buttons[fmt] = button
+        layout.addLayout(actions)
+        self.selection_hint = plain_label("Select a device to identify it. Hover over OS, ports or device type to see evidence.")
+        layout.addWidget(self.selection_hint)
         self.model = InventoryModel(self)
         self.proxy = InventoryFilter(self)
         self.proxy.setSourceModel(self.model)
         self.table = QTableView()
         self.table.setAccessibleName("Discovered assets; press Enter for details")
         self.table.setModel(self.proxy)
+        self.table.selectionModel().selectionChanged.connect(lambda *_: self.update_identify_button())
         self.table.setSortingEnabled(True)
         self.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
@@ -526,11 +571,12 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setColumnWidth(0, 135)
         self.table.setColumnWidth(1, 160)
-        self.table.setColumnWidth(2, 160)
+        self.table.setColumnWidth(2, 195)
+        self.table.setColumnWidth(3, 155)
         # activated covers Enter and the platform's normal activation gesture.
         # Connecting doubleClicked too would open the same modal dialog twice.
         self.table.activated.connect(self.show_asset)
-        self.empty = plain_label("Start a discovery or import a JSON report to build your inventory.")
+        self.empty = plain_label("Start a discovery or import a CSV, JSON or Discovr HTML report.")
         layout.addWidget(self.empty)
         self.welcome = QWidget()
         welcome_row = QHBoxLayout(self.welcome)
@@ -587,7 +633,7 @@ class MainWindow(QMainWindow):
         tabs.setVisible(not self.demo)
         vertical.setSizes([430, 190])
         layout.addWidget(vertical, 1)
-        layout.addWidget(plain_label("Double-click an asset for all details. Risk, OS and agent capability are estimates; unknown exposure is not evidence of isolation."))
+        layout.addWidget(plain_label("Double-click for full details. Remote OS, device type, risk and agent capability use available evidence; unknown exposure does not mean isolated."))
         return container
 
     def detect_subnet(self):
@@ -711,6 +757,7 @@ class MainWindow(QMainWindow):
             self.jobs.blockSignals(False)
         running = sum(j["status"] == "running" for j in jobs)
         self.start_button.setEnabled(running < 4 and not self._preparing and not self.demo)
+        self.update_identify_button()
         self.stop_all_button.setEnabled(bool(running))
         selected = next((j for j in jobs if j["id"] == self.selected_job_id()), jobs[-1] if jobs else None)
         self.stop_button.setEnabled(bool(selected and selected["status"] == "running"))
@@ -742,7 +789,7 @@ class MainWindow(QMainWindow):
         urgent = sum(a.get("Risk") in ("Critical", "High") for a in assets)
         self.summary.setText(f"{len(assets):,} of {len(self.model.assets):,} assets   ·   {capable:,} agent capable   ·   {urgent:,} high / critical")
         self.empty.setVisible(not assets)
-        self.empty.setText("No assets match these filters." if self.model.assets else "Start a discovery or import a JSON report to build your inventory.")
+        self.empty.setText("No assets match these filters." if self.model.assets else "Start a discovery or import a CSV, JSON or Discovr HTML report.")
         self.welcome.setVisible(not self.model.assets and not self.demo)
 
     def reset_filters(self):
@@ -752,6 +799,34 @@ class MainWindow(QMainWindow):
             combo.setCurrentIndex(0)
             combo.blockSignals(False)
         self.apply_filters()
+
+    def update_identify_button(self):
+        index = self.table.currentIndex()
+        asset = self.model.assets[self.proxy.mapToSource(index).row()] if index.isValid() else {}
+        try:
+            ipaddress.IPv4Address(asset.get("IP", ""))
+            valid = not asset.get("Cloud")
+        except (ValueError, TypeError):
+            valid = False
+        self.identify_button.setEnabled(valid and not self.demo and not self._preparing)
+        if asset:
+            evidence = asset.get("PortStatus") or ("Ports not checked" if is_blank(asset.get("Ports")) else "Recorded port information")
+            os_status = asset.get("OSConfidence") or ("OS not identified" if is_blank(asset.get("OS")) else "Recorded OS information")
+            self.selection_hint.setText(f"{asset.get('IP') or asset.get('Hostname', 'Selected device')} · {os_status} · {evidence}")
+        else:
+            self.selection_hint.setText("Select a device to identify it. Hover over OS, ports or device type to see evidence.")
+
+    def identify_selected(self):
+        index = self.table.currentIndex()
+        if not index.isValid() or self.demo or self._preparing:
+            return
+        asset = self.model.assets[self.proxy.mapToSource(index).row()]
+        self.source.setCurrentIndex(self.source.findData("network"))
+        self.fields["network"]["target"].setText(asset["IP"])
+        self.fields["network"]["ports"].clear()
+        self.fields["network"]["depth"].setCurrentIndex(0)
+        self.environment.setText(str(asset.get("Environment") or ""))
+        self.start_scan()
 
     def visible_assets(self):
         return [self.model.assets[self.proxy.mapToSource(self.proxy.index(row, 0)).row()]
@@ -810,17 +885,14 @@ class MainWindow(QMainWindow):
 
     def read_report(self, path):
         """Disk parsing and merge are safe in a worker; no widgets are touched here."""
-        # Bound reads before JSON parsing so a selected multi-gigabyte file cannot exhaust RAM.
-        with Path(path).open("rb") as source:
-            raw = source.read(32 * 1024 * 1024 + 1)
-        if len(raw) > 32 * 1024 * 1024:
-            raise BadRequest("Report exceeds the 32 MB import limit")
-        return self.session.import_report(json.loads(raw))
+        from discovr.reports import read_report
+        return self.session.import_report(read_report(path))
 
     def import_dialog(self):
         if self._importing or self.demo:
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Import Discovr report", self.last_folder, "JSON reports (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "Import report to view or convert", self.last_folder,
+                                            "Discovr reports (*.json *.csv *.html *.htm);;JSON (*.json);;CSV (*.csv);;Discovr HTML (*.html *.htm)")
         if path:
             self._importing = True
             self.statusBar().showMessage("Importing report… You can continue using the inventory.")
@@ -866,12 +938,18 @@ class MainWindow(QMainWindow):
             self.error("Could not save inventory", str(exc))
             return False
 
-    def export_dialog(self):
+    def export_dialog(self, fmt=None):
+        self.apply_filters()
         choices = {"CSV spreadsheet (*.csv)": "csv", "JSON report (*.json)": "json", "HTML report (*.html)": "html"}
-        path, selected = QFileDialog.getSaveFileName(self, f"Export {self.proxy.rowCount():,} visible assets", str(Path(self.last_folder) / "discovr-report"), ";;".join(choices))
+        if fmt not in FORMATS:
+            fmt = None  # QAction.triggered can pass a boolean.
+        filters = ";;".join(k for k, v in choices.items() if not fmt or v == fmt)
+        path, selected = QFileDialog.getSaveFileName(self, f"Export {self.proxy.rowCount():,} visible assets", str(Path(self.last_folder) / ("discovr-report" + ("." + fmt if fmt else ""))), filters)
         if path:
-            fmt = choices.get(selected, "csv")
+            fmt = fmt or choices.get(selected, "csv")
             try:
+                if Path(path).suffix and Path(path).suffix.lower() != "." + fmt:
+                    raise ValueError(f"Use a .{fmt} filename for a {fmt.upper()} report.")
                 self.export_path(path if Path(path).suffix else path + "." + fmt, fmt)
             except (OSError, ValueError) as exc:
                 self.error("Could not export report", str(exc))
@@ -882,17 +960,21 @@ class MainWindow(QMainWindow):
         box.exec()
 
     def clear_inventory(self):
+        if self.demo:
+            return
+        if self._preparing:
+            self.error("Discovery is preparing", "Wait for preparation to finish, then clear the results.")
+            return
         if self._importing:
             self.error("Import is running", "Wait for the import to finish before clearing the inventory.")
             return
-        if self.session.snapshot(self.version)["jobs"] and self.session.cancels:
-            self.error("Discovery is running", "Stop running scans before clearing the inventory.")
-            return
-        answer = QMessageBox.question(self, "Clear inventory", "Clear all assets from this session? Export anything you want to keep first.",
+        answer = QMessageBox.question(self, "Clear results", "Stop running scans and clear all results, including hidden rows? Saved report files will be kept.",
                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
         if answer == QMessageBox.StandardButton.Yes:
-            self.session.clear()
+            self.session.clear(stop_running=True)
             self.refresh()
+            self.reset_filters()
+            self.statusBar().showMessage("Results cleared. Saved reports are unchanged.")
 
     def show_demo(self):
         if self.demo:
@@ -918,10 +1000,13 @@ class MainWindow(QMainWindow):
         self.text_dialog("Using Discovr", "1. Choose a discovery source, enter its details, and select Start discovery.\n\n"
                          "2. Results arrive in the inventory. Up to four scans can run together. Stop selected preserves assets already found. "
                          "Double-click a scan to inspect warnings and incomplete results.\n\n"
+                         "Select a device and choose Identify selected for a Standard check of that address. Hover over OS, ports and device type for evidence.\n\n"
+                         "Reset filters shows all rows. Clear results stops scans and removes every row after confirmation. Saved files are kept.\n\n"
+                         "Convert a report: import CSV, JSON or a new Discovr HTML report into an empty inventory, then click CSV, HTML or JSON above the table.\n\n"
                          "3. Search or filter results. Double-click an asset to inspect every field.\n\n"
                          "Enter a CIDR such as 10.0.0.0/24 in Search to group a range. Add an Environment label before discovery to group results by client or location.\n\n"
                          "4. Export view saves filtered results as CSV, JSON or HTML. Save inventory saves every asset as JSON, regardless of filters. "
-                         "Import JSON merges a previous report into this session.\n\n"
+                         "Import report merges a CSV, JSON or Discovr HTML report into this session.\n\n"
                          "5. Close the app before ejecting your USB drive. Results and credentials are kept in memory; save results you want to retain.\n\n"
                          "Help > Explore sample inventory opens fictional examples in a separate window without scanning. Tools > Local API integration enables an optional, authenticated loopback API for your integrations.\n\n"
                          "Local discovery works offline. Cloud and AD require network access and authorised credentials. "

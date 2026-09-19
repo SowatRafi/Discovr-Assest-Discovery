@@ -2,6 +2,12 @@
 
 ## 2.1.0 (unreleased)
 
+- Identify this computer from OS facts and local listeners; read bounded HTTP/SSH/UPnP hints
+  from remote devices and recognise default gateways without external tools.
+- Add Identify selected and explain unchecked, filtered, incomplete and closed-port results.
+- Separate Reset filters from Clear results; cancelling and clearing rejects late scan callbacks.
+- Add visible CSV/HTML/JSON buttons and offline report conversion, including safe HTML data round trips.
+
 - Stream responding network hosts before the sweep finishes; add Quick/Standard discovery.
 - Move scan preparation and file import off the GUI thread; cache filtering and IP sort keys.
 - Preserve table selection while streaming, clear the saved indicator correctly, and show progress/warnings inline.

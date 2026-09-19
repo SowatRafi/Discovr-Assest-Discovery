@@ -85,6 +85,21 @@ not model every firewall/routing layer or prove external reachability.
 
 ## Maintenance
 
+Device identification now uses local OS facts, checked TCP listeners, route-table gateway
+evidence and bounded remote SSH/HTTP/UPnP descriptions. The HTTP reads follow
+[HTTP semantics](https://www.rfc-editor.org/rfc/rfc9110.html); unicast UPnP discovery follows
+[Device Architecture 1.1, section 1.3](https://openconnectivity.org/upnp-specs/UPnP-arch-DeviceArchitecture-v1.1.pdf).
+No multicast, authentication, redirects or UPnP control requests are sent. Anonymous HTTPS
+discovery accepts self-signed device certificates and does not claim TLS verification.
+Quick/custom-port scope and cancellation are covered by regressions. Port absence is no
+longer presented as if every port had been checked.
+
+Clear results marks running jobs as discarded while holding the session lock, then cancels
+and clears. Both stream callbacks and final results honour that marker, so the table stays
+empty even when an in-flight request returns late. The API's existing clear behaviour still
+requires stopping scans first. CSV/JSON/Discovr HTML conversion stays entirely offline;
+HTML import reads an inert data island and never renders content.
+
 Use a feature branch and a pull request. Keep fixes accompanied by tests for actual failure
 modes. Commit with the maintainer's Git identity; do not add automated co-author trailers.
 Do not store credentials, customer inventories or local tooling state in Git.

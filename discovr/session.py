@@ -176,11 +176,17 @@ class Session:
             self.version += 1
             return keys
 
-    def clear(self):
+    def clear(self, stop_running=False):
         """Forget every asset (jobs and the activity log stay)."""
         with self.lock:
-            if self.cancels:
+            if self.cancels and not stop_running:
                 raise BadRequest("Stop running scans before clearing the inventory")
+            if stop_running:
+                # A late callback/final result from a cancelled scan must never
+                # repopulate an inventory the operator explicitly cleared.
+                for job_id in self.cancels:
+                    self.jobs[job_id]["discard_results"] = True
+                self.stop_all()
             self.inventory.clear()
             self.index.clear()
             self.version += 1
@@ -275,8 +281,10 @@ class Session:
                 job.update(done=done, total=total, stage="Stopping" if cancel.is_set() else stage)
 
         def found(asset):
-            keys = self.merge([decorate(asset)])
             with self.lock:
+                if job.get("discard_results"):
+                    return
+                keys = self.merge([decorate(asset)])
                 seen.update(keys)
                 job["found"] = len(seen)
 
@@ -293,8 +301,8 @@ class Session:
         try:
             result = scanner.run(on_progress=progress, on_asset=found, cancel=cancel)
             assets = result[0] if isinstance(result, tuple) else result
-            keys = self.merge([decorate(asset) for asset in assets])
             with self.lock:
+                keys = [] if job.get("discard_results") else self.merge([decorate(asset) for asset in assets])
                 seen.update(keys)
                 warnings = list(getattr(scanner, "warnings", []))
                 status = "cancelled" if cancel.is_set() else "partial" if warnings else "done"

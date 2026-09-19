@@ -8,7 +8,7 @@ import traceback
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 
 def require(condition, message):
@@ -52,6 +52,8 @@ def exercise(window, result_file):
         job = next(iter(window.session.jobs.values()))
         require(job["status"] == "done", str(job))
         require(any(a.get("IP") == "127.0.0.1" and str(port) in a.get("Ports", "") for a in window.model.assets), "Loopback scan absent from table")
+        local = next(a for a in window.model.assets if a.get("IP") == "127.0.0.1")
+        require(local.get("OSConfidence") == "Local OS" and local.get("Tag") != "[Unknown]", "Local computer was not identified")
         result["checks"].append("validation-and-real-loopback-scan")
         fixture = result_file.with_name("input.json")
         fixture.write_text(json.dumps([{"Hostname": "portable-desktop-check", "OS": "Linux", "Source": "Network"}]), encoding="utf-8")
@@ -61,9 +63,16 @@ def exercise(window, result_file):
         require(window.proxy.rowCount() == 1, "Search did not filter imported assets")
         for fmt in ("csv", "json", "html"):
             report = result_file.with_name(f"filtered.{fmt}")
-            window.export_path(report, fmt)
+            original_save = QFileDialog.getSaveFileName
+            try:
+                QFileDialog.getSaveFileName = lambda *a: (str(report), a[-1])
+                QTest.mouseClick(window.export_buttons[fmt], Qt.MouseButton.LeftButton)
+            finally:
+                QFileDialog.getSaveFileName = original_save
             body = report.read_text(encoding="utf-8")
             require("portable-desktop-check" in body and "127.0.0.1" not in body, f"{fmt} ignored filters")
+            from discovr.reports import read_report
+            require(len(read_report(report)) == 1, f"{fmt} failed conversion roundtrip")
         complete = result_file.with_name("complete.json")
         window.export_path(complete, "json", all_assets=True)
         require(len(json.loads(complete.read_text(encoding="utf-8"))) == 2, "Save inventory lost filtered-out assets")
@@ -101,6 +110,14 @@ def exercise(window, result_file):
         result["checks"].extend(["isolated-offline-demo-and-cidr-filter", "opt-in-authenticated-api"])
         window.refresh()
         window.grab().save(str(result_file.with_suffix(".png")))
+        original_question = QMessageBox.question
+        try:
+            QMessageBox.question = lambda *a: QMessageBox.StandardButton.Yes
+            QTest.mouseClick(window.clear_results_button, Qt.MouseButton.LeftButton)
+        finally:
+            QMessageBox.question = original_question
+        require(window.proxy.rowCount() == 0 and not window.session.snapshot()["assets"], "Clear results left inventory rows behind")
+        result["checks"].extend(["local-os-and-device-identity", "visible-export-buttons-and-three-format-conversion", "clear-results"])
         result["ok"] = True
     except Exception:
         result["error"] = traceback.format_exc()

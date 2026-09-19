@@ -17,7 +17,7 @@ single-file Windows/Linux builds. macOS Intel and Apple silicon are additional t
 | Inventory agent-capable hosts | TCP, AD, AWS and Azure results merge into one inventory; OS/role/AgentCapable, cloud agent context | Capability is a heuristic. Discovr does not verify that EDR is installed or certify compatibility with a vendor's agent. |
 | Identify non-agent devices | Printer, network, IoT, mobile and other role rules; classification tests and demo | Best effort from available ports, names and metadata; not guaranteed device identification. |
 | Active and passive discovery | Built-in TCP connections plus driver-free OS neighbour-cache observation; network/passive tests | Passive means cache observation, not packet sniffing. IPv4 network scope; cached entries may be stale. |
-| Clear exportable IP/hostname/OS/role report | Native table/detail dialog; filtered CSV/JSON/HTML and complete JSON save; packaged round-trip checks | Unknown fields remain unknown. HTML is an optional report file, not the app interface. |
+| Clear exportable IP/hostname/OS/role report | Native table/evidence details; visible CSV/HTML/JSON buttons, offline import/conversion and complete JSON save; packaged round-trip checks | Unidentified fields include reasons. HTML is an optional report file, not the app interface. |
 | Open-source foundations | Python sockets/asyncio, ldap3, provider SDKs, Qt/PySide6; exact dependencies and licence notices | nmap was removed to satisfy the owner's no-extra-software instruction. |
 | Simple GUI or CLI | Native source form, subnet detection, progressive options, stop/progress, filters, help/demo; optional source CLI | Normal USB usage needs no terminal. |
 | AWS/Azure VM discovery | Regional/subscription inventory, runtime authentication, VM/agent/firewall context; provider fixtures | Real tenant access and permissions must be validated with owner credentials. |
@@ -50,7 +50,7 @@ single-file Windows/Linux builds. macOS Intel and Apple silicon are additional t
 
 | Nice to have | Delivery / verification |
 | --- | --- |
-| Non-agent asset identification | Role heuristics for printers, network devices and IoT, with clearly labelled OS guesses. |
+| Non-agent asset identification | Route-table gateway recognition, bounded SSH/HTTP/UPnP product evidence and role heuristics, with clearly labelled remote OS guesses and Identify selected. |
 | Role/IP-range/environment grouping | Device-type filter; CIDR search (including imported IPv6 records); operator Environment label/filter and ScanScope metadata. Labels do not establish identity across unrelated overlapping LANs. |
 | Parallel scanning | Bounded asynchronous TCP workers, up to four independent discovery jobs, concurrent provider operations, bounded DNS/SSH workers. |
 | Well-designed web UI with filtering/export | **Replaced by the owner's native-desktop requirement.** Equivalent inventory, filtering, export and detail workflows are native; obsolete website assets are deleted. |

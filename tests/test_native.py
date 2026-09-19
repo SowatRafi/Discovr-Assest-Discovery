@@ -17,6 +17,82 @@ from discovr.scan import ScanCancelled
 from discovr.session import BadRequest, Session
 
 
+def test_clear_results_button_clears_hidden_rows_and_filters(window, monkeypatch):
+    window.session.merge([{"IP": "192.0.2.1"}, {"IP": "192.0.2.2"}])
+    window.refresh()
+    window.search.setText("192.0.2.1")
+    window.apply_filters()
+    QTest.mouseClick(window.reset_filters_button, Qt.MouseButton.LeftButton)
+    assert len(window.model.assets) == 2 and window.proxy.rowCount() == 2
+    window.search.setText("192.0.2.1")
+    monkeypatch.setattr(QMessageBox, "question", lambda *a: QMessageBox.StandardButton.No)
+    QTest.mouseClick(window.clear_results_button, Qt.MouseButton.LeftButton)
+    assert len(window.model.assets) == 2
+    monkeypatch.setattr(QMessageBox, "question", lambda *a: QMessageBox.StandardButton.Yes)
+    QTest.mouseClick(window.clear_results_button, Qt.MouseButton.LeftButton)
+    assert window.proxy.rowCount() == 0 and window.session.snapshot()["assets"] == []
+    assert not window.search.text() and window.empty.isVisible()
+
+
+def test_clear_running_scan_rejects_late_streams_and_final_results(window, monkeypatch):
+    import threading
+    started, finish = threading.Event(), threading.Event()
+    class Scanner:
+        def run(self, **kwargs):
+            kwargs["on_asset"]({"IP": "192.0.2.1"})
+            started.set()
+            finish.wait(3)
+            kwargs["on_asset"]({"IP": "192.0.2.2"})
+            return [{"IP": "192.0.2.3"}]
+    monkeypatch.setattr("discovr.session.build_scanner", lambda *a: (Scanner(), "Late results"))
+    window.session.start("network", {"target": "192.0.2.1"})
+    pump(started.is_set)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a: QMessageBox.StandardButton.Yes)
+    QTest.mouseClick(window.clear_results_button, Qt.MouseButton.LeftButton)
+    finish.set()
+    pump(lambda: not window.session.cancels)
+    window.refresh()
+    assert window.session.snapshot()["assets"] == [] and window.proxy.rowCount() == 0
+
+
+@pytest.mark.parametrize("fmt", ["csv", "html", "json"])
+def test_visible_export_buttons_choose_the_format(window, tmp_path, monkeypatch, fmt):
+    window.session.merge([{"IP": "192.0.2.1", "OS": "Linux"}, {"IP": "192.0.2.2"}])
+    window.refresh()
+    window.search.setText("192.0.2.1")  # Do not wait for the debounce.
+    path = tmp_path / ("chosen." + fmt)
+    observed = []
+    def choose(*args):
+        observed.append(args[-1])
+        return str(path), args[-1]
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", choose)
+    QTest.mouseClick(window.export_buttons[fmt], Qt.MouseButton.LeftButton)
+    from discovr.reports import read_report
+    assert len(read_report(path)) == 1 and observed[0].endswith(f"(*.{fmt})")
+
+
+def test_identify_selected_uses_standard_scan_for_only_that_address(window, monkeypatch):
+    window.session.merge([{"IP": "192.0.2.5", "Source": "Passive"}])
+    window.refresh()
+    window.table.selectRow(0)
+    window.update_identify_button()
+    calls = []
+    monkeypatch.setattr(window, "start_scan", lambda: calls.append(window.fields["network"]["target"].text()))
+    assert window.identify_button.isEnabled()
+    QTest.mouseClick(window.identify_button, Qt.MouseButton.LeftButton)
+    assert calls == ["192.0.2.5"] and window.fields["network"]["depth"].currentData() == "standard"
+
+
+def test_missing_port_results_are_distinguished(window):
+    window.session.merge([{"IP": "192.0.2.1", "Ports": "N/A", "Source": "Passive"},
+                          {"IP": "192.0.2.2", "Ports": "None", "PortsChecked": 44, "TCPResponses": 0},
+                          {"IP": "192.0.2.3", "Ports": "None", "PortsChecked": 44, "TCPResponses": 44}])
+    window.refresh()
+    col = window.model.columns.index("Ports")
+    assert [window.model.data(window.model.index(i, col)) for i in range(3)] == [
+        "Not checked", "No TCP response", "No open ports found"]
+
+
 @pytest.fixture(scope="module")
 def app():
     return QApplication.instance() or QApplication(["Discovr tests"])

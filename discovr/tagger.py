@@ -8,7 +8,7 @@ first and the first match wins.
 import re
 
 # Hosts that can run an EDR / security agent (the tool's primary target).
-AGENT_CAPABLE_TAGS = {"[Workstation]", "[Server]"}
+AGENT_CAPABLE_TAGS = {"[Workstation]", "[Server]", "[Computer]"}
 
 PRINTER_PORTS = {515, 631, 9100}          # LPD, IPP, JetDirect raw printing
 IOT_PORTS = {554, 1883, 8883, 37777}      # RTSP cameras, MQTT brokers/devices, Dahua DVRs
@@ -64,6 +64,14 @@ class Tagger:
         # not listening services. An allow-all rule is not evidence of a printer.
         if asset.get("Cloud"):
             return "[Server]"
+
+        # A product description is more specific than generic Linux/SSH services.
+        hint = asset.get("DeviceHint")
+        if hint in ("Network", "Printer", "Storage", "IoT"):
+            return f"[{hint}]"
+        if hint == "Computer" and asset.get("LocalHost"):
+            return "[Server]" if "server" in os_name else "[Workstation]" if any(
+                k in os_name for k in ("windows", "macos")) else "[Computer]"
 
         # Network gear first: "Cisco IOS" must not be mistaken for Apple iOS below.
         if any(k in os_name for k in NETWORK_OS_HINTS) or any(k in host for k in NETWORK_HOST_HINTS):

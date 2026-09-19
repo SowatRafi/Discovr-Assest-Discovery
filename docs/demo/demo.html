@@ -30,7 +30,7 @@
 </style></head>
 <body>
 <h1>Discovr asset report</h1>
-<p class="meta">Generated 2026-09-19 13:00 by Discovr 2.1.0 &middot; 10 assets</p>
+<p class="meta">Generated 2026-09-19 13:37 by Discovr 2.1.0 &middot; 10 assets</p>
 <section class="tiles" aria-label="Summary"><div class="tile"><b>10</b><span>Assets</span></div><div class="tile"><b>6</b><span>Agent-capable</span></div><div class="tile"><b>0</b><span>Critical</span></div><div class="tile"><b>4</b><span>High</span></div><div class="tile"><b>4</b><span>Medium</span></div><div class="tile"><b>2</b><span>Low</span></div></section>
 <table>
 <thead><tr><th scope="col">IP</th><th scope="col">Hostname</th><th scope="col">OS</th><th scope="col">Ports</th>
@@ -47,4 +47,153 @@
 <tr><td class="mono">203.0.113.10</td><td>demo-worker.example</td><td>Debian Linux</td><td class="mono">22</td><td>[Server]</td><td class="risk Medium">Medium</td><td>Yes</td><td>GCP</td><td><details><summary>8 fields</summary><dl><dt>Cloud</dt><dd>GCP</dd><dt>Demo</dt><dd>Yes</dd><dt>Environment</dt><dd>Example development</dd><dt>Evidence</dt><dd>Fictional sample only; not a real scan or verified exposure assessment.</dd><dt>InstanceID</dt><dd>demo-worker</dd><dt>InternetExposed</dt><dd>No</dd><dt>ProjectID</dt><dd>demo-project</dd><dt>Zone</dt><dd>australia-southeast1-a</dd></dl></details></td></tr>
 <tr><td class="mono">203.0.113.20</td><td>Unknown</td><td>Unknown</td><td class="mono">Unknown</td><td>[Unknown]</td><td class="risk Medium">Medium</td><td>No</td><td>Passive</td><td><details><summary>4 fields</summary><dl><dt>Demo</dt><dd>Yes</dd><dt>Environment</dt><dd>Example development</dd><dt>Evidence</dt><dd>Fictional sample only; not a real scan or verified exposure assessment.</dd><dt>SeenVia</dt><dd>OS neighbour cache (may be stale)</dd></dl></details></td></tr>
 </tbody></table>
+<script type="application/json" id="discovr-data">[
+  {
+    "IP": "192.0.2.10",
+    "Hostname": "demo-dc.example",
+    "OS": "Windows Server 2022",
+    "Ports": "88,135,389,445,636,3389",
+    "Source": "AD, Network",
+    "Environment": "Example office",
+    "DomainController": true,
+    "Demo": true,
+    "Evidence": "Fictional sample only; not a real scan or verified exposure assessment.",
+    "Tag": "[Server]",
+    "AgentCapable": true,
+    "Risk": "Medium"
+  },
+  {
+    "IP": "192.0.2.20",
+    "Hostname": "demo-laptop.example",
+    "OS": "Windows 11",
+    "Ports": "135,445",
+    "Source": "AD",
+    "Environment": "Example office",
+    "Demo": true,
+    "Evidence": "Fictional sample only; not a real scan or verified exposure assessment.",
+    "Tag": "[Workstation]",
+    "AgentCapable": true,
+    "Risk": "Low"
+  },
+  {
+    "IP": "192.0.2.30",
+    "Hostname": "demo-mac.example",
+    "OS": "macOS",
+    "Ports": "22,3283",
+    "Source": "Network",
+    "Environment": "Example office",
+    "Demo": true,
+    "Evidence": "Fictional sample only; not a real scan or verified exposure assessment.",
+    "Tag": "[Workstation]",
+    "AgentCapable": true,
+    "Risk": "Low"
+  },
+  {
+    "IP": "192.0.2.40",
+    "Hostname": "demo-printer.example",
+    "OS": "Unknown",
+    "Ports": "80,631,9100",
+    "Source": "Network",
+    "Environment": "Example office",
+    "Demo": true,
+    "Evidence": "Fictional sample only; not a real scan or verified exposure assessment.",
+    "Tag": "[Printer]",
+    "AgentCapable": false,
+    "Risk": "High"
+  },
+  {
+    "IP": "192.0.2.50",
+    "Hostname": "demo-camera.example",
+    "OS": "Embedded Linux (guessed)",
+    "Ports": "80,554",
+    "Source": "Network",
+    "Environment": "Example office",
+    "Demo": true,
+    "Evidence": "Fictional sample only; not a real scan or verified exposure assessment.",
+    "Tag": "[IoT]",
+    "AgentCapable": false,
+    "Risk": "High"
+  },
+  {
+    "IP": "192.0.2.60",
+    "Hostname": "demo-router.example",
+    "OS": "Cisco IOS (guessed)",
+    "Ports": "22,23,80",
+    "Source": "Network",
+    "Environment": "Example office",
+    "Demo": true,
+    "Evidence": "Fictional sample only; not a real scan or verified exposure assessment.",
+    "Tag": "[Network]",
+    "AgentCapable": false,
+    "Risk": "High"
+  },
+  {
+    "IP": "198.51.100.10",
+    "Hostname": "demo-web.example",
+    "OS": "Linux (Ubuntu)",
+    "Ports": "22,443",
+    "Source": "AWS",
+    "Cloud": "AWS",
+    "AccountID": "000000000000",
+    "InstanceID": "i-demo-web",
+    "Region": "ap-southeast-2",
+    "InternetExposed": true,
+    "ExposedPorts": "22,443",
+    "Environment": "Example production",
+    "Demo": true,
+    "Evidence": "Fictional sample only; not a real scan or verified exposure assessment.",
+    "Tag": "[Server]",
+    "AgentCapable": true,
+    "Risk": "High"
+  },
+  {
+    "IP": "198.51.100.20",
+    "Hostname": "demo-db.example",
+    "OS": "Windows Server 2019",
+    "Ports": "1433,3389",
+    "Source": "Azure",
+    "Cloud": "Azure",
+    "SubscriptionID": "demo-subscription",
+    "InstanceID": "demo-database",
+    "InternetExposed": null,
+    "Environment": "Example production",
+    "Demo": true,
+    "Evidence": "Fictional sample only; not a real scan or verified exposure assessment.",
+    "Tag": "[Server]",
+    "AgentCapable": true,
+    "Risk": "Medium"
+  },
+  {
+    "IP": "203.0.113.10",
+    "Hostname": "demo-worker.example",
+    "OS": "Debian Linux",
+    "Ports": "22",
+    "Source": "GCP",
+    "Cloud": "GCP",
+    "ProjectID": "demo-project",
+    "Zone": "australia-southeast1-a",
+    "InstanceID": "demo-worker",
+    "InternetExposed": false,
+    "Environment": "Example development",
+    "Demo": true,
+    "Evidence": "Fictional sample only; not a real scan or verified exposure assessment.",
+    "Tag": "[Server]",
+    "AgentCapable": true,
+    "Risk": "Medium"
+  },
+  {
+    "IP": "203.0.113.20",
+    "Hostname": "Unknown",
+    "OS": "Unknown",
+    "Ports": "Unknown",
+    "Source": "Passive",
+    "SeenVia": "OS neighbour cache (may be stale)",
+    "Environment": "Example development",
+    "Demo": true,
+    "Evidence": "Fictional sample only; not a real scan or verified exposure assessment.",
+    "Tag": "[Unknown]",
+    "AgentCapable": false,
+    "Risk": "Medium"
+  }
+]</script>
 </body></html>

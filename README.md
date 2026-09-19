@@ -28,8 +28,9 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 - **Answers the rollout question** - every asset gets a type (Workstation, Server, Printer,
   IoT, ...), an **Agent-capable** flag and a triage **risk** rating. Cloud VMs show whether the
   AWS SSM or Azure VM agent is reporting, i.e. whether an agent can be pushed remotely.
-- **Native desktop interface** - filters, search, detail view, CSV / JSON / HTML export and JSON
-  import. Group by environment or search a CIDR. Explore an isolated, offline sample inventory.
+- **Native desktop interface** - filters, search, detail view and visible CSV / HTML / JSON buttons.
+  Import and convert CSV, JSON and new Discovr HTML reports offline. Clear results and Reset filters
+  are separate actions. Group by environment or search a CIDR; explore an isolated sample inventory.
 - **Responsive discovery** - results stream as hosts respond; Quick/Standard detail, background
   preparation/import, cached search, stable row selection, visible progress and coverage warnings.
 - **Optional integration** - enable an authenticated loopback REST API from Tools; see the [API guide](docs/API.md).
@@ -104,7 +105,9 @@ It does not run a browser or embedded webview. No listener starts unless you exp
   Sort columns and double-click an asset to inspect all provider fields. Streaming updates preserve selection.
 - **Save inventory** — save every asset as a re-importable JSON report, regardless of filters.
 - **Export view** — save the visible results as CSV, JSON or HTML using a normal file dialog.
-- **Import JSON** — merge previous Discovr reports into the current session.
+- **Import report** — merge CSV, JSON or new Discovr HTML; click an output format to convert it.
+- **Identify selected** — run Standard discovery for one selected IPv4 device to refresh its evidence.
+- **Clear results** — confirm, stop scans and remove all rows, including hidden ones. **Reset filters** only changes the view.
 - **Close / Quit** — stop discovery and offer to save unsaved inventory before exiting.
 
 Risk, device type, agent capability and network OS are estimates from observed evidence.
@@ -154,13 +157,18 @@ incomplete cloud/directory coverage (partial reports are still saved), `130` int
    refusal - proves the host is up and immediately streams a preliminary row. Plain TCP connects need no raw sockets, so no admin rights.
 2. **ARP cache** - the sweep made the OS resolve every local address, so hosts whose firewall
    drops all TCP still appear, with their MAC address.
-3. **Fingerprint** live hosts on 44 common service ports while reverse DNS runs in parallel; SSH
-   banners and exposed services give an OS guess (Windows, domain controller, Ubuntu, iOS, ...).
+3. **Identify** live hosts on 44 common TCP service ports while reverse DNS runs in parallel.
+   Bounded SSH banners, web-service headers/titles and targeted unicast UPnP descriptions provide
+   OS/product hints. No logins, redirects, multicast searches or device changes are performed.
+   Local OS facts and additional local listeners come from the operating system when available;
+   the route table identifies default gateways. Remote OS names remain labelled as guesses.
 
-**Quick** uses the first 10 ports and DNS, skipping the extended ports and SSH banners.
+**Quick** uses the first 10 ports and DNS, skipping extra ports and service identification.
 **Standard** follows all three stages. **More scan options** exposes load intensity and custom
-ports. A custom port list replaces the built-in list. `SeenVia` distinguishes TCP responses
+ports. A custom port list replaces the built-in list and skips UPnP. `SeenVia` distinguishes TCP responses
 from potentially stale cache evidence; `DiscoveryStatus` distinguishes partial from final rows.
+`PortsChecked`/`PortStatus` distinguish no open checked ports from no response or an incomplete scan.
+`OSConfidence`/`OSEvidence` record why an OS is known, hinted or unidentified.
 
 | Intensity | Probes in flight | Timeout | Use for |
 |---|---|---|---|
@@ -230,11 +238,13 @@ Keep inventories from unrelated on-premises networks separate when their address
 
 ## Reports
 
-Use **Export view** to save CSV, JSON or HTML reports through a native file dialog.
+Use the visible **CSV / HTML / JSON** buttons (or **Export view**) to save reports through a native file dialog.
 Use **Save inventory** to preserve every asset as JSON, including filtered-out rows.
 The optional source CLI saves to `Documents/discovr_reports/{csv,json,html}` (or `--out DIR`)
 and writes a log to `.../logs`. Each field any source reported becomes a column.
-JSON reports can be re-imported into the desktop.
+CSV, JSON and new Discovr HTML reports can be imported and converted in the desktop.
+HTML contains safely escaped, inert JSON for lossless round trips; no script executes during import.
+CSV preserves flat fields and boolean meaning; JSON/HTML preserve structured metadata.
 
 ## Building and development
 

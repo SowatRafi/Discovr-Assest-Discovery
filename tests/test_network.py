@@ -71,6 +71,8 @@ def test_scan_finds_listening_port_on_localhost():
     assert scanned == 1 and elapsed < 10
     assert [a["IP"] for a in assets] == ["127.0.0.1"] and assets[0]["Ports"] == str(port)
     assert assets[0]["Source"] == "Network" and streamed and progress[-1][0] == progress[-1][1]
+    assert assets[0]["LocalHost"] is True and assets[0]["OS"] != "Unknown"
+    assert assets[0]["DeviceHint"] == "Computer" and assets[0]["PortsChecked"] == 1
 
 
 def test_cancel_stops_before_probing():
@@ -96,6 +98,9 @@ def test_first_host_streams_before_silent_host_finishes(monkeypatch):
             await asyncio.wait_for(shown.wait(), 1)
             return None
         monkeypatch.setattr("discovr.network.probe", probe)
+        async def http(*args):
+            return ""
+        monkeypatch.setattr("discovr.network.http_identity", http)
         monkeypatch.setattr("discovr.network.read_arp_cache", lambda: {})
         monkeypatch.setattr("discovr.network.socket.gethostbyaddr", lambda ip: ("example", [], []))
         rows = await NetworkDiscovery("192.0.2.1,192.0.2.2", ports="443")._scan(

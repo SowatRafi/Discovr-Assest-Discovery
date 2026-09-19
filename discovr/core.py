@@ -199,9 +199,14 @@ def merge_assets(inventory: dict, assets, source=None, index=None, keys=None) ->
         old_identities = _identities(current)
         same_source = bool((set(str(current.get("Source", "")).split(", ")) &
                             set(str(incoming.get("Source", "")).split(", "))) - {""})
+        preserve_os = not is_blank(current.get("OS")) and (is_blank(incoming.get("OS")) or
+            ("guessed" in str(incoming.get("OS", "")).lower() and
+             "guessed" not in str(current.get("OS", "")).lower()))
         for field, value in incoming.items():
             if field in DERIVED_FIELDS:
                 continue
+            if field in ("OSConfidence", "OSEvidence") and preserve_os:
+                continue  # Evidence must describe the OS we actually kept.
             if field == "Ports":
                 # Directory/cache updates carry no service evidence. They must not
                 # erase ports learned by a network scan after the sources have merged.
@@ -293,6 +298,7 @@ _REPORT = Template("""<!doctype html>
 <tbody>
 $rows
 </tbody></table>
+<script type="application/json" id="discovr-data">$data</script>
 </body></html>
 """)
 
@@ -332,6 +338,9 @@ def to_html(assets, title="Discovr asset report") -> str:
     return _REPORT.substitute(
         title=html.escape(title), generated=datetime.now().strftime("%Y-%m-%d %H:%M"),
         version=__version__, count=len(assets), tiles=tile_html, rows="\n".join(rows),
+        # JSON is inert, but </script> inside a hostname could end its element.
+        # Escape HTML delimiters so reports remain safe and losslessly importable.
+        data=to_json(assets).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e"),
     )
 
 
