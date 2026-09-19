@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.1.0 (unreleased)
+## 2.1.0-rc.1 (2026-09-19)
 
 - Identify this computer from OS facts and local listeners; read bounded HTTP/SSH/UPnP hints
   from remote devices and recognise default gateways without external tools.

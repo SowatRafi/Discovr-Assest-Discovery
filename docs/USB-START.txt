@@ -19,6 +19,11 @@ inspect and export them freely. Every exported sample row is marked Demo.
 USER_GUIDE.md, REQUIREMENTS.md and API.md are included beside this file.
 
 Save inventory keeps every asset as JSON. Export view saves filtered results.
+CSV / HTML / JSON buttons export the visible rows directly. Import report reads
+those formats for offline conversion (HTML must be a new Discovr report).
+Select a device and choose Identify selected to refresh its OS/service evidence.
+Reset filters shows all rows. Clear results stops scans and empties the inventory
+after confirmation; saved report files are kept.
 Close the app window or choose File / Quit before ejecting the USB drive.
 Discovr offers to save unsaved inventory when you close it.
 

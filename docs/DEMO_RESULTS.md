@@ -22,16 +22,17 @@ fictional output examples. None is a scan of a customer's network.
 
 ## Local measurements
 
-Measured on Windows 11, Python 3.13.14, local SSD, using `scripts/demo_results.py`.
+Measured on 19 September 2026 using the discovery code at `da64dcd`, on Windows 11,
+Python 3.13.14 and a local SSD, with `scripts/demo_results.py`.
 Raw results are in [measurements.json](demo/measurements.json).
 
 | Measurement | Result |
 | --- | --- |
-| First result from a real TCP listener created on loopback | 1.91 ms |
-| Complete one-host, one-port loopback scan (including DNS/cache work) | 47.34 ms |
+| First result from a real TCP listener created on loopback | 165.49 ms |
+| Complete one-host, one-port loopback scan (including DNS/cache work) | 212.15 ms |
 | Correctly detected the listener's open TCP port | Yes |
-| Merge, display and paint 10,000 synthetic inventory rows | 1,003.25 ms |
-| Filter those 10,000 rows to one matching hostname and paint | 11.65 ms |
+| Merge, display and paint 10,000 synthetic inventory rows | 1,002.37 ms |
+| Filter those 10,000 rows to one matching hostname and paint | 11.16 ms |
 
 These are reproducible observations from one run, not a network-wide performance promise.
 The benchmark includes initial ingestion; normal interactive file import parses/merges in

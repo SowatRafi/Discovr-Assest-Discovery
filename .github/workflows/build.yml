@@ -128,8 +128,15 @@ jobs:
           merge-multiple: true
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS.txt
-      - name: Publish release
+      - name: Prepare release draft
         env:
           GH_TOKEN: ${{ github.token }}
-        # A tag prepares a draft. Maintainers publish after reviewing CI and release notes.
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes --draft
+        # Publishing a reviewed draft can create its tag and trigger this workflow.
+        # Keep the reviewed assets/notes intact instead of failing on a duplicate
+        # release or replacing binaries whose checksums have already been published.
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; keeping its reviewed assets and notes."
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes --draft
+          fi

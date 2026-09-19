@@ -1,11 +1,12 @@
 """AWS discovery: EC2 instances in one or every enabled region, with firewall exposure.
 
 Per region Discovr makes three paginated list calls (security groups, instances, SSM
-agents) and joins them in memory, and all regions run in parallel - so a full-account
-sweep costs seconds regardless of instance count.
+agents) and joins them in memory, with bounded parallel region discovery. Runtime
+depends on instance count, API pagination, latency and throttling.
 
-Credentials are only ever taken from the standard AWS chain at runtime (environment,
-`aws configure` profiles, `aws sso login`, instance roles) - never from CLI arguments.
+Credentials come from native runtime fields or the existing AWS credential chain
+(environment, profiles or instance roles). Provider CLI installation is not required,
+and secret keys are never accepted as command-line arguments.
 """
 import logging
 from concurrent.futures import ThreadPoolExecutor

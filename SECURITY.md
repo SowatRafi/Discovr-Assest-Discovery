@@ -15,11 +15,11 @@ vulnerability*) instead of a public issue. Include steps to reproduce and the af
 |---|---|---|
 | Desktop UI | Browser/API exposure and untrusted asset markup | Native Qt Widgets calls the controller directly; normal startup has no listener or webview. Asset values are plain text. The obsolete website was removed. |
 | Optional local API | Unauthorised scans, inventory reads/writes, CSRF and DNS rebinding | Explicit enable from Tools; loopback binding only, random per-enable token in `X-Discovr-Token`, exact Host validation, no CORS, JSON-only mutations, 32 connection limit and bounded request bodies. Closing Discovr stops the listener. |
-| Untrusted reports | Script in HTML, formula injection in CSV, malformed imported identities | HTML exports escape keys and values; CSV cells and headers neutralise formula prefixes; JSON imports are bounded to 32 MB / 65,536 assets and validated before mutation. |
+| Untrusted reports | Script in HTML, formula injection in CSV, malformed imported identities | HTML values and inert JSON conversion data are escaped; HTML imports parse data without rendering scripts. CSV cells and headers neutralise formulas, and imported booleans/counts retain their types. CSV/JSON/Discovr HTML imports are bounded to 32 MB / 65,536 assets and validated before mutation. |
 | Active Directory | Password captured by sniffing or by an attacker in the middle; account lockout | A simple bind (which carries the password) only happens inside a TLS channel whose certificate and hostname **verified** (system trust store, or `--ca-file` with the domain CA); otherwise NTLM challenge-response, which never sends the password; one bind attempt per mechanism; password prompted (or `DISCOVR_AD_PASSWORD`), never logged, stored or echoed |
 | Cloud APIs | Long-lived or over-privileged credentials | Credentials supplied at runtime through native form fields or provider chains; read-only list calls; Azure pagination restricted to its HTTPS API origin; minimum permissions documented in the README |
-| Target networks | Disruption of fragile devices | Bounded concurrency and timeouts (`--intensity gentle`), TCP connects only (no malformed packets), passive mode sends nothing |
-| Local machine | Privilege abuse | No elevation or third-party executable needed; OS-provided ARP readers use fixed paths and argument lists, without a shell; no packet-capture driver is loaded |
+| Target networks | Disruption of fragile devices | Bounded TCP connects and timeouts (`--intensity gentle`); Standard mode also reads SSH banners, bounded HTTP responses and targeted unicast UPnP descriptions. No authentication, redirects, multicast searches or UPnP control requests. Passive mode sends nothing. |
+| Local machine | Privilege abuse | No elevation or separately installed executable needed; OS ARP/route readers use fixed paths and argument lists without a shell. Local OS/interface/listener facts are read when permitted; no packet-capture driver is loaded. |
 | Supply chain | Vulnerable dependencies | Small dependency set, `pip-audit` in CI, UPX disabled, SHA-256 checksums published with releases |
 
 ## Data handling and privacy
@@ -51,6 +51,9 @@ vulnerability*) instead of a public issue. Include steps to reproduce and the af
   modelled. Results can over-report or miss exposure; an empty finding never proves isolation.
   Unavailable metadata is labelled Unknown and reported in scan warnings.
 - **Risk ratings are heuristics** from OS names and open ports, not vulnerability findings.
+- **Remote OS/device descriptions are hints.** A device can withhold or falsify its advertised
+  identity. Anonymous HTTPS discovery accepts self-signed certificates and does not verify
+  the device's TLS identity; it sends no credentials and reads at most 32 KiB per response.
 - **Binaries are not code-signed yet**; verify downloads with `SHA256SUMS.txt`.
 
 - **Runtime credentials** entered in the desktop remain in process memory during a scan.

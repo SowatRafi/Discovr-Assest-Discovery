@@ -5,7 +5,7 @@ running your security agent - on the network, in Active Directory and in AWS, Az
 from a USB-ready app with a native desktop window. No installer, no agents, no internet
 connection needed for local discovery. Cloud discovery requires access to the provider's APIs.
 
-[![build](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml/badge.svg?branch=Rejuvinate-Discovr)](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml)
+[![build](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml?query=branch%3Amain)
 
 ![Discovr native desktop](docs/screenshot.png)
 
@@ -21,8 +21,8 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 - **USB-ready, three operating systems** - self-contained app folders for Windows x64, macOS (Apple
   silicon and Intel), and Linux x64. Python and Qt are bundled; users do not install them.
 - **Fast, unprivileged network sweep** - an asyncio TCP engine needs no nmap, admin rights or
-  Npcap; an ARP-cache pass also finds firewalled hosts on the local segment. Gentle / normal /
-  aggressive profiles protect sensitive networks.
+  Npcap; an ARP-cache pass can also reveal cached local neighbours. Gentle / normal /
+  aggressive profiles control connection load.
 - **Several sources, one inventory** - active network, passive observation, Active Directory, AWS,
   Azure and GCP. Cloud resources use provider identities so overlapping private addresses stay separate.
 - **Answers the rollout question** - every asset gets a type (Workstation, Server, Printer,
@@ -42,7 +42,7 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 
 ### USB app: no installer or commands
 
-1. Download the matching **discovr-usb** archive from [Releases](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases).
+1. Download the matching **discovr-usb** archive from the [2.1.0 RC1 release](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/tag/v2.1.0-rc.1).
    Extract it once using your file manager and copy the **whole Discovr folder/app** to your USB drive.
 2. Plug in the drive and double-click **Discovr.exe** on Windows, **Discovr.app** on macOS,
    or **Discovr** on Linux. Discovr opens its own desktop window.
@@ -51,14 +51,17 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 
 | System | Download |
 | --- | --- |
-| Windows x64 | `discovr-usb-windows-x64.zip` |
-| Linux x64 | `discovr-usb-linux-x64.tar.gz` |
-| macOS Apple silicon | `discovr-usb-macos-arm64.zip` |
-| macOS Intel | `discovr-usb-macos-x64.zip` |
+| Windows x64 | [USB folder ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.1/discovr-usb-windows-x64.zip) |
+| Linux x64 | [USB folder TAR.GZ](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.1/discovr-usb-linux-x64.tar.gz) |
+| macOS Apple silicon | [App ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.1/discovr-usb-macos-arm64.zip) |
+| macOS Intel | [App ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.1/discovr-usb-macos-x64.zip) |
 
 Prefer one file? Optional `discovr-single-windows-x64.exe` and `discovr-single-linux-x64`
 builds contain the same features. They unpack into temporary storage on each launch and
 start more slowly. The USB folder is recommended for speed. macOS already presents one `.app` item.
+
+RC1 is a prerelease. The release page includes build provenance and SHA-256 checksums for
+all six downloads; publisher signing and live customer cloud/domain acceptance remain pending.
 
 **First time?** Follow the [illustrated usage and demo guide](docs/USER_GUIDE.md), or open
 **Help → Explore sample inventory** inside the app. Sample exports are clearly marked `Demo`.
