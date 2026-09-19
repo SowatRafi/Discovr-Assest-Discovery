@@ -13,12 +13,10 @@ vulnerability*) instead of a public issue. Include steps to reproduce and the af
 
 | Boundary | Threat | Control |
 |---|---|---|
-| Browser ↔ local UI server | Other websites driving the API (CSRF), DNS rebinding, other local users | Listens on `127.0.0.1` only; per-launch random token required in an `X-Discovr-Token` header (a custom header cannot be sent cross-site without a CORS preflight, and no CORS headers are ever returned); `Host` must be `127.0.0.1`/`localhost`; JSON bodies only; token compared in constant time |
-| Token handling | Leaking the session key | Token travels in the URL *fragment* (never sent to servers or in `Referer`), is stripped from the address bar on load, and lives only in that tab's `sessionStorage` |
-| Untrusted asset data (hostnames, AD attributes, cloud tags, imported JSON) | XSS in the dashboard, script in HTML reports, formula injection in CSV | Dashboard builds every node with `textContent` (no `innerHTML` with data) under a strict Content-Security-Policy (`script-src 'self'`); HTML reports escape every key and value; CSV cells *and column headers* starting with `= + - @` are prefixed with `'` |
+| Desktop UI | Browser/API exposure and untrusted asset markup | Native Qt Widgets calls the discovery controller directly; no HTTP listener or webview. Asset values are plain text, including dialogs and errors. The historical web server is excluded from USB builds. |
+| Untrusted reports | Script in HTML, formula injection in CSV, malformed imported identities | HTML exports escape keys and values; CSV cells and headers neutralise formula prefixes; JSON imports are bounded to 32 MB / 65,536 assets and validated before mutation. |
 | Active Directory | Password captured by sniffing or by an attacker in the middle; account lockout | A simple bind (which carries the password) only happens inside a TLS channel whose certificate and hostname **verified** (system trust store, or `--ca-file` with the domain CA); otherwise NTLM challenge-response, which never sends the password; one bind attempt per mechanism; password prompted (or `DISCOVR_AD_PASSWORD`), never logged, stored or echoed |
-| Local API robustness | Memory or thread exhaustion by a local client or a hostile imported report | Request bodies are always consumed and capped at 32 MB (negative or non-numeric lengths and chunked uploads are refused); 30 s socket timeout against slow-drip clients; port ranges clamped to 1-65535 before expansion |
-| Cloud APIs | Long-lived or over-privileged credentials | Credentials supplied at runtime through dashboard fields or provider chains; read-only list calls; Azure pagination restricted to its HTTPS API origin; minimum permissions documented in the README |
+| Cloud APIs | Long-lived or over-privileged credentials | Credentials supplied at runtime through native form fields or provider chains; read-only list calls; Azure pagination restricted to its HTTPS API origin; minimum permissions documented in the README |
 | Target networks | Disruption of fragile devices | Bounded concurrency and timeouts (`--intensity gentle`), TCP connects only (no malformed packets), passive mode sends nothing |
 | Local machine | Privilege abuse | No elevation or third-party executable needed; OS-provided ARP readers use fixed paths and argument lists, without a shell; no packet-capture driver is loaded |
 | Supply chain | Vulnerable dependencies | Small dependency set, `pip-audit` in CI, UPX disabled, SHA-256 checksums published with releases |
@@ -26,9 +24,9 @@ vulnerability*) instead of a public issue. Include steps to reproduce and the af
 ## Data handling and privacy
 
 - Discovr sends nothing anywhere except to the systems you ask it to query. It has no
-  telemetry, update checks or third-party web requests; the dashboard loads no CDN content.
-- Inventory lives in memory while the dashboard runs; files are written only when you save or
-  export (default `Documents/discovr_reports`, or `--out`). Reports contain IPs, hostnames, MAC
+  telemetry, update checks or third-party web requests; the desktop loads no remote UI content.
+- Inventory lives in memory while the desktop runs; files are written only when you save or
+  export through a native file dialog (the optional CLI uses `Documents/discovr_reports`, or `--out`). Reports contain IPs, hostnames, MAC
   addresses and cloud metadata - treat them as confidential.
 - Data minimisation: AD `description` fields are not collected (admins sometimes store
   passwords there).
@@ -47,8 +45,8 @@ vulnerability*) instead of a public issue. Include steps to reproduce and the af
 - **Risk ratings are heuristics** from OS names and open ports, not vulnerability findings.
 - **Binaries are not code-signed yet**; verify downloads with `SHA256SUMS.txt`.
 
-- **Runtime credentials** entered in the dashboard remain in process memory during a scan.
-  The local API never returns them, and completed jobs retain no credential objects.
+- **Runtime credentials** entered in the desktop remain in process memory during a scan.
+  Password fields clear after successful submission, and completed jobs retain no credential objects.
   Existing provider SDK login caches are controlled by those providers. Python cannot
   guarantee that freed secret memory has been physically zeroed.
 - **Inventory identity** isolates cloud resources by provider identity. LAN correlation is

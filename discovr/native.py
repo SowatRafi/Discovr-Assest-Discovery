@@ -1,0 +1,672 @@
+"""Native Qt Widgets desktop. Workers own discovery; only the GUI thread touches widgets.
+
+The desktop calls Session directly. It has no HTTP listener, browser, webview, HTML
+renderer or external discovery executable. Reports are ordinary user-selected files.
+"""
+from datetime import datetime
+import ipaddress
+import json
+import logging
+import os
+from pathlib import Path
+import tempfile
+
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer
+from PySide6.QtGui import QAction, QColor, QKeySequence
+from PySide6.QtWidgets import (
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+    QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
+    QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QSplitter,
+    QStackedWidget, QTableView, QTableWidget, QTableWidgetItem, QTabWidget,
+    QToolBar, QVBoxLayout, QWidget,
+)
+
+from discovr import __version__
+from discovr.core import CORE_FIELDS, _cell_text, to_csv, to_html, to_json
+from discovr.session import BadRequest, Session, _ActivityHandler
+
+SOURCES = [("Network", "network"), ("Neighbour cache", "passive"), ("Active Directory", "ad"),
+           ("Amazon Web Services", "aws"), ("Microsoft Azure", "azure"), ("Google Cloud", "gcp")]
+FORMATS = {"json": to_json, "csv": to_csv, "html": to_html}
+LABELS = {"Tag": "Device type", "AgentCapable": "Agent capable", "OS": "OS hint"}
+RISK_COLOURS = {"Critical": "#ad172a", "High": "#a9480d", "Medium": "#806000", "Low": "#20704f"}
+
+
+def plain_label(text):
+    label = QLabel(text)
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    label.setWordWrap(True)
+    return label
+
+
+def write_report(path, assets, fmt):
+    """Replace only a complete report; disk-full/removal must not destroy an older export."""
+    path = Path(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", dir=path.parent,
+                                         prefix=f".{path.name}.", suffix=".tmp", delete=False) as output:
+            temporary = Path(output.name)
+            output.write(FORMATS[fmt](assets))
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+class InventoryModel(QAbstractTableModel):
+    """One record per row; no widget per cell, so large inventories remain usable."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.assets = []
+        self.columns = list(CORE_FIELDS)
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.assets)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.columns)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        key = self.columns[index.column()]
+        value = self.assets[index.row()].get(key)
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
+            return _cell_text(value) if value is not None else "Unknown"
+        if role == Qt.ItemDataRole.ForegroundRole and key == "Risk":
+            # Keep triage colours legible in the operating system's light and dark themes.
+            dark = QApplication.palette().base().color().lightness() < 128
+            colours = {"Critical": "#ff8996", "High": "#ffb37b", "Medium": "#f2d37b", "Low": "#89d8b3"} if dark else RISK_COLOURS
+            return QColor(colours.get(value, "#aaaaaa" if dark else "#555555"))
+        return None
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.DisplayRole:
+            return LABELS.get(self.columns[section], self.columns[section]) if orientation == Qt.Orientation.Horizontal else section + 1
+        return None
+
+    def replace(self, assets):
+        self.beginResetModel()
+        self.assets = assets
+        self.endResetModel()
+
+
+class InventoryFilter(QSortFilterProxyModel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.query = ""
+        self.criteria = {}
+        self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+
+    def filterAcceptsRow(self, row, parent):
+        asset = self.sourceModel().assets[row]
+        if self.query and self.query not in " ".join(_cell_text(v) for v in asset.values()).casefold():
+            return False
+        for key, value in self.criteria.items():
+            if value is None:
+                continue
+            observed = asset.get(key)
+            if key == "Source":
+                if value not in [v.strip() for v in str(observed or "").replace(";", ",").split(",")]:
+                    return False
+            elif observed != value:
+                return False
+        return True
+
+    def lessThan(self, left, right):
+        column = self.sourceModel().columns[left.column()]
+        a, b = (self.sourceModel().assets[index.row()].get(column) for index in (left, right))
+        if column == "IP":
+            def ip_key(value):
+                try:
+                    address = ipaddress.ip_address(str(value))
+                    return (0, address.version, int(address))
+                except ValueError:
+                    return (1, 0, str(value or "").casefold())
+            return ip_key(a) < ip_key(b)
+        if column == "Risk":
+            order = ["Critical", "High", "Medium", "Low"]
+            return (order.index(a) if a in order else 4) < (order.index(b) if b in order else 4)
+        return super().lessThan(left, right)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, session=None):
+        super().__init__()
+        self.session = session or Session()
+        self.version = -1
+        self.saved_version = 0
+        self.activity_seq = 0
+        self.fields = {}
+        self.secret_fields = []
+        self._allow_close = False
+        self._jobs_signature = None
+        self.last_folder = str(Path.home() / "Documents")
+        self.setWindowTitle(f"Discovr {__version__} — Asset discovery[*]")
+        self.resize(1280, 820)
+        self.setMinimumSize(920, 620)
+        self._build_actions()
+        splitter = QSplitter(self)
+        splitter.addWidget(self._build_forms())
+        splitter.addWidget(self._build_inventory())
+        splitter.setSizes([310, 970])
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
+        self.setCentralWidget(splitter)
+        self.statusBar().showMessage("Ready. Choose a source and start discovery.")
+        self.log_handler = _ActivityHandler(self.session)
+        self.app_logger = logging.getLogger("discovr")
+        self.previous_log_level = self.app_logger.level
+        self.app_logger.setLevel(logging.INFO)
+        self.app_logger.addHandler(self.log_handler)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start(250)
+        self.refresh()
+
+    def _action(self, title, callback, shortcut=None):
+        action = QAction(title, self)
+        action.triggered.connect(callback)
+        if shortcut:
+            action.setShortcut(shortcut)
+        return action
+
+    def _build_actions(self):
+        file_menu = self.menuBar().addMenu("&File")
+        toolbar = QToolBar("Inventory", self)
+        toolbar.setMovable(False)
+        self.addToolBar(toolbar)
+        for title, callback, shortcut in (
+            ("Import JSON…", self.import_dialog, QKeySequence.StandardKey.Open),
+            ("Save inventory…", self.save_inventory, QKeySequence.StandardKey.Save),
+            ("Export view…", self.export_dialog, "Ctrl+E"),
+        ):
+            action = self._action(title, callback, shortcut)
+            file_menu.addAction(action)
+            toolbar.addAction(action)
+        file_menu.addSeparator()
+        file_menu.addAction(self._action("Clear inventory…", self.clear_inventory))
+        file_menu.addAction(self._action("Quit", self.close, QKeySequence.StandardKey.Quit))
+        view_menu = self.menuBar().addMenu("&View")
+        view_menu.addAction(self._action("Find asset", lambda: self.search.setFocus(), QKeySequence.StandardKey.Find))
+        view_menu.addAction(self._action("Reset filters", self.reset_filters))
+        help_menu = self.menuBar().addMenu("&Help")
+        help_menu.addAction(self._action("Using Discovr", self.show_help, QKeySequence.StandardKey.HelpContents))
+        help_menu.addAction(self._action("Third-party licences", self.show_licences))
+        help_menu.addAction(self._action("About Discovr", self.about))
+
+    def _field(self, layout, kind, key, label, placeholder="", secret=False, browse=False, value=""):
+        edit = QLineEdit()
+        edit.setObjectName(f"{kind}.{key}")
+        edit.setPlaceholderText(placeholder)
+        edit.setText(value)
+        edit.setAccessibleName(label)
+        if secret:
+            edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.secret_fields.append(edit)
+        self.fields[kind][key] = edit
+        if browse:
+            row = QWidget()
+            box = QHBoxLayout(row)
+            box.setContentsMargins(0, 0, 0, 0)
+            box.addWidget(edit)
+            button = QPushButton("Browse…")
+            button.clicked.connect(lambda: self.browse_file(edit))
+            box.addWidget(button)
+            layout.addRow(label, row)
+        else:
+            layout.addRow(label, edit)
+        return edit
+
+    def _build_forms(self):
+        container = QWidget()
+        container.setMinimumWidth(270)
+        layout = QVBoxLayout(container)
+        heading = plain_label("New discovery")
+        font = heading.font()
+        font.setPointSize(font.pointSize() + 4)
+        font.setBold(True)
+        heading.setFont(font)
+        layout.addWidget(heading)
+        self.source = QComboBox()
+        self.source.setAccessibleName("Discovery source")
+        for title, kind in SOURCES:
+            self.source.addItem(title, kind)
+        layout.addWidget(self.source)
+        self.forms = QStackedWidget()
+        for title, kind in SOURCES:
+            self.fields[kind] = {}
+            page = QWidget()
+            form = QFormLayout(page)
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+            form.setContentsMargins(0, 8, 0, 8)
+            f = lambda key, label, **kwargs: self._field(form, kind, key, label, **kwargs)
+            if kind == "network":
+                f("target", "Target range", placeholder="192.168.1.0/24 or a host IP")
+                detect = QPushButton("Use local subnet")
+                detect.clicked.connect(self.detect_subnet)
+                form.addRow(detect)
+                f("ports", "TCP ports (optional)", placeholder="Default discovery ports; e.g. 22,80,443")
+                intensity = QComboBox()
+                for value in ("gentle", "normal", "aggressive"):
+                    intensity.addItem(value.title(), value)
+                intensity.setCurrentIndex(1)
+                self.fields[kind]["intensity"] = intensity
+                form.addRow("Scan intensity", intensity)
+                form.addRow(plain_label("Built-in TCP discovery. OS and device types are inferred from available evidence."))
+            elif kind == "passive":
+                duration = QSpinBox()
+                duration.setRange(10, 3600)
+                duration.setValue(120)
+                duration.setSuffix(" seconds")
+                self.fields[kind]["duration"] = duration
+                form.addRow("Observe for", duration)
+                form.addRow(plain_label("Reads this computer’s neighbour cache without sending packets. Cached devices may be stale; devices absent from the cache will not appear."))
+            elif kind == "ad":
+                f("domain", "Domain", placeholder="corp.example")
+                f("username", "Username", placeholder="user@corp.example")
+                f("password", "Password", secret=True)
+                f("dc", "Domain controller (optional)", placeholder="DNS host or IP")
+                tls = QCheckBox("Use LDAPS (port 636)")
+                self.fields[kind]["ldaps"] = tls
+                form.addRow(tls)
+                f("caFile", "CA certificate (optional)", browse=True)
+                form.addRow(plain_label("Uses verified TLS when available, otherwise NTLM. Choose your domain CA to verify an internal certificate."))
+            elif kind == "aws":
+                f("region", "Region", value="all", placeholder="all or us-east-1")
+                f("accessKey", "Access key ID", secret=True)
+                f("secretKey", "Secret access key", secret=True)
+                f("sessionToken", "Session token (optional)", secret=True)
+                f("profile", "Existing profile (optional)")
+                form.addRow(plain_label("Enter runtime credentials, or use an existing profile/environment. No AWS CLI is needed for access-key credentials."))
+            elif kind == "azure":
+                f("tenantId", "Tenant ID")
+                f("clientId", "Application / client ID")
+                f("clientSecret", "Client secret", secret=True)
+                f("subscription", "Subscription ID (optional)")
+                form.addRow(plain_label("Use an application with Reader access, or existing environment credentials. Leave subscription empty to enumerate accessible subscriptions."))
+            else:
+                f("project", "Project ID (optional)")
+                f("zone", "Zone (optional)", placeholder="All zones")
+                f("credentialsFile", "Service-account JSON key", browse=True)
+                form.addRow(plain_label("Choose a service-account key, or use existing application-default credentials. Project defaults to the key’s project."))
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            scroll.setWidget(page)
+            self.forms.addWidget(scroll)
+        self.source.currentIndexChanged.connect(self.forms.setCurrentIndex)
+        self.source.currentIndexChanged.connect(lambda: self.form_error.clear())
+        layout.addWidget(self.forms, 1)
+        self.form_error = plain_label("")
+        layout.addWidget(self.form_error)
+        self.start_button = QPushButton("Start discovery")
+        self.start_button.setMinimumHeight(36)
+        self.start_button.clicked.connect(self.start_scan)
+        layout.addWidget(self.start_button)
+        layout.addWidget(plain_label("Credentials stay in memory and are cleared from the form when a scan starts."))
+        return container
+
+    def _build_inventory(self):
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        self.summary = plain_label("")
+        layout.addWidget(self.summary)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search all asset fields…")
+        self.search.setClearButtonEnabled(True)
+        self.search.setAccessibleName("Search assets")
+        self.search.textChanged.connect(self.apply_filters)
+        layout.addWidget(self.search)
+        row = QHBoxLayout()
+        self.filters = {}
+        for key, title in (("Risk", "All risks"), ("Tag", "All device types"), ("Source", "All sources"), ("AgentCapable", "Any agent capability")):
+            combo = QComboBox()
+            combo.setAccessibleName(title)
+            combo.addItem(title, None)
+            if key == "Risk":
+                for risk in RISK_COLOURS:
+                    combo.addItem(risk, risk)
+            elif key == "AgentCapable":
+                combo.addItem("Agent capable", True)
+                combo.addItem("Not agent capable", False)
+            combo.currentIndexChanged.connect(self.apply_filters)
+            self.filters[key] = combo
+            row.addWidget(combo)
+        reset = QPushButton("Reset")
+        reset.clicked.connect(self.reset_filters)
+        row.addWidget(reset)
+        layout.addLayout(row)
+        self.model = InventoryModel(self)
+        self.proxy = InventoryFilter(self)
+        self.proxy.setSourceModel(self.model)
+        self.table = QTableView()
+        self.table.setModel(self.proxy)
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().hide()
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setColumnWidth(0, 135)
+        self.table.setColumnWidth(1, 160)
+        self.table.setColumnWidth(2, 160)
+        # activated covers Enter and the platform's normal activation gesture.
+        # Connecting doubleClicked too would open the same modal dialog twice.
+        self.table.activated.connect(self.show_asset)
+        self.empty = plain_label("Start a discovery or import a JSON report to build your inventory.")
+        layout.addWidget(self.empty)
+        vertical = QSplitter(Qt.Orientation.Vertical)
+        vertical.addWidget(self.table)
+        tabs = QTabWidget()
+        scans = QWidget()
+        scan_layout = QVBoxLayout(scans)
+        self.jobs = QTableWidget(0, 5)
+        self.jobs.setHorizontalHeaderLabels(["Discovery", "Status", "Progress", "Assets", "Job ID"])
+        self.jobs.setColumnHidden(4, True)
+        self.jobs.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.jobs.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.jobs.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.jobs.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.jobs.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.jobs.verticalHeader().hide()
+        self.jobs.itemDoubleClicked.connect(self.show_job)
+        scan_layout.addWidget(self.jobs)
+        buttons = QHBoxLayout()
+        self.stop_button = QPushButton("Stop selected")
+        self.stop_button.clicked.connect(self.stop_selected)
+        buttons.addWidget(self.stop_button)
+        self.stop_all_button = QPushButton("Stop all")
+        self.stop_all_button.clicked.connect(self.session.stop_all)
+        buttons.addWidget(self.stop_all_button)
+        details = QPushButton("Scan details…")
+        details.clicked.connect(self.show_job)
+        buttons.addWidget(details)
+        buttons.addStretch()
+        scan_layout.addLayout(buttons)
+        tabs.addTab(scans, "Scans")
+        self.activity = QPlainTextEdit()
+        self.activity.setReadOnly(True)
+        self.activity.setMaximumBlockCount(500)
+        tabs.addTab(self.activity, "Activity")
+        vertical.addWidget(tabs)
+        vertical.setSizes([430, 190])
+        layout.addWidget(vertical, 1)
+        layout.addWidget(plain_label("Double-click an asset for all details. Risk, OS and agent capability are estimates; unknown exposure is not evidence of isolation."))
+        return container
+
+    def detect_subnet(self):
+        try:
+            from discovr.network import local_subnet
+            self.fields["network"]["target"].setText(local_subnet())
+            self.form_error.clear()
+        except OSError as exc:
+            self.form_error.setText(f"Could not detect a subnet: {exc}. Enter a target range.")
+
+    def browse_file(self, edit):
+        path, _ = QFileDialog.getOpenFileName(self, "Choose a file", self.last_folder)
+        if path:
+            edit.setText(path)
+            self.last_folder = str(Path(path).parent)
+
+    def start_scan(self):
+        kind = self.source.currentData()
+        params = {}
+        for key, widget in self.fields[kind].items():
+            params[key] = (widget.text() if isinstance(widget, QLineEdit) else
+                           widget.isChecked() if isinstance(widget, QCheckBox) else
+                           widget.value() if isinstance(widget, QSpinBox) else widget.currentData())
+        try:
+            job = self.session.start(kind, params)
+        except (ValueError, OSError) as exc:
+            self.form_error.setText(str(exc))
+            field = self.fields[kind].get(getattr(exc, "field", None))
+            if field is not None:
+                field.setFocus()
+            return
+        finally:
+            # This temporary mapping must not retain another copy of credentials.
+            params.clear()
+        for field in self.secret_fields:
+            if field in self.fields[kind].values():
+                field.clear()
+        self.form_error.clear()
+        self.statusBar().showMessage(f"Started {job['label']}")
+        self.refresh()
+        self.jobs.selectRow(self.jobs.rowCount() - 1)
+
+    def refresh(self):
+        snapshot = self.session.snapshot(self.version, self.activity_seq)
+        if snapshot["assets"] is not None:
+            self.version = snapshot["version"]
+            self.model.replace(snapshot["assets"])
+            for key in ("Tag", "Source"):
+                combo = self.filters[key]
+                selected = combo.currentData()
+                values = set()
+                for asset in self.model.assets:
+                    value = str(asset.get(key) or "")
+                    values.update(v.strip() for v in value.replace(";", ",").split(",") if v.strip())
+                combo.blockSignals(True)
+                while combo.count() > 1:
+                    combo.removeItem(1)
+                for value in sorted(values):
+                    combo.addItem(value.strip("[]"), value)
+                index = combo.findData(selected)
+                combo.setCurrentIndex(max(0, index))
+                combo.blockSignals(False)
+            self.apply_filters()
+            self.setWindowModified(self.version != self.saved_version and bool(self.model.assets))
+        jobs = snapshot["jobs"]
+        signature = json.dumps(jobs, sort_keys=True)
+        if signature != self._jobs_signature:
+            selected = self.selected_job_id()
+            self._jobs_signature = signature
+            self.jobs.setRowCount(len(jobs))
+            for row, job in enumerate(jobs):
+                progress = f"{job['stage']} ({job['done']}/{job['total']})" if job["total"] else job["stage"]
+                status = "Incomplete" if job["status"] == "partial" else job["status"].title()
+                for col, value in enumerate((job["label"], status, progress, job["found"], job["id"])):
+                    item = QTableWidgetItem(str(value))
+                    item.setToolTip("\n".join([job.get("error") or ""] + job.get("warnings", [])))
+                    self.jobs.setItem(row, col, item)
+                if job["id"] == selected:
+                    self.jobs.selectRow(row)
+        running = sum(j["status"] == "running" for j in jobs)
+        self.start_button.setEnabled(running < 4)
+        self.stop_all_button.setEnabled(bool(running))
+        for entry in snapshot["activity"]:
+            stamp = datetime.fromtimestamp(entry["time"]).strftime("%H:%M:%S")
+            self.activity.appendPlainText(f"{stamp}  {entry['level'].upper()}  {entry['message']}")
+            self.activity_seq = entry["seq"]
+
+    def apply_filters(self, *_):
+        self.proxy.query = self.search.text().strip().casefold()
+        self.proxy.criteria = {key: combo.currentData() for key, combo in self.filters.items()}
+        self.proxy.beginFilterChange()
+        self.proxy.endFilterChange()
+        assets = self.visible_assets()
+        capable = sum(a.get("AgentCapable") is True for a in assets)
+        urgent = sum(a.get("Risk") in ("Critical", "High") for a in assets)
+        self.summary.setText(f"{len(assets):,} of {len(self.model.assets):,} assets   ·   {capable:,} agent capable   ·   {urgent:,} high / critical")
+        self.empty.setVisible(not assets)
+        self.empty.setText("No assets match these filters." if self.model.assets else "Start a discovery or import a JSON report to build your inventory.")
+
+    def reset_filters(self):
+        self.search.clear()
+        for combo in self.filters.values():
+            combo.setCurrentIndex(0)
+        self.apply_filters()
+
+    def visible_assets(self):
+        return [self.model.assets[self.proxy.mapToSource(self.proxy.index(row, 0)).row()]
+                for row in range(self.proxy.rowCount())]
+
+    def selected_job_id(self):
+        item = self.jobs.item(self.jobs.currentRow(), 4)
+        return item.text() if item else None
+
+    def stop_selected(self):
+        job_id = self.selected_job_id()
+        if job_id:
+            try:
+                self.session.cancel(job_id)
+            except BadRequest as exc:
+                self.statusBar().showMessage(str(exc))
+            self.refresh()
+
+    def text_dialog(self, title, content):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.resize(680, 460)
+        layout = QVBoxLayout(dialog)
+        text = QPlainTextEdit()
+        text.setReadOnly(True)
+        text.setPlainText(content)
+        layout.addWidget(text)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def show_job(self, *_):
+        job_id = self.selected_job_id()
+        job = next((j for j in self.session.snapshot(self.version)["jobs"] if j["id"] == job_id), None)
+        if job:
+            content = f"{job['label']}\nStatus: {job['status']}\n{job['stage']}\nAssets found: {job['found']}"
+            if job["error"]:
+                content += f"\n\nError\n{job['error']}"
+            if job["warnings"]:
+                content += "\n\nWarnings\n" + "\n\n".join(job["warnings"])
+            self.text_dialog("Scan details", content)
+
+    def show_asset(self, index):
+        if index.isValid():
+            asset = self.model.assets[self.proxy.mapToSource(index).row()]
+            self.text_dialog("Asset details", "\n\n".join(f"{LABELS.get(key, key)}\n{_cell_text(value) if value is not None else 'Unknown'}"
+                                                         for key, value in asset.items()))
+
+    def import_path(self, path):
+        # Bound reads before JSON parsing so a selected multi-gigabyte file cannot exhaust RAM.
+        with Path(path).open("rb") as source:
+            raw = source.read(32 * 1024 * 1024 + 1)
+        if len(raw) > 32 * 1024 * 1024:
+            raise BadRequest("Report exceeds the 32 MB import limit")
+        count = self.session.import_report(json.loads(raw))
+        self.last_folder = str(Path(path).parent)
+        self.refresh()
+        self.statusBar().showMessage(f"Imported {count:,} assets")
+        return count
+
+    def import_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Import Discovr report", self.last_folder, "JSON reports (*.json)")
+        if path:
+            try:
+                self.import_path(path)
+            except (OSError, ValueError, RecursionError) as exc:
+                self.error("Could not import report", str(exc))
+
+    def export_path(self, path, fmt, all_assets=False):
+        snapshot = self.session.snapshot()
+        assets = snapshot["assets"] if all_assets else self.visible_assets()
+        write_report(path, assets, fmt)
+        if all_assets and fmt == "json":
+            # A worker may have merged more assets during disk I/O. Only mark this snapshot saved.
+            self.saved_version = snapshot["version"]
+        self.last_folder = str(Path(path).parent)
+        self.statusBar().showMessage(f"Saved {len(assets):,} assets to {Path(path).name}")
+        return True
+
+    def save_inventory(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save complete inventory", str(Path(self.last_folder) / "discovr-inventory.json"), "JSON reports (*.json)")
+        if not path:
+            return False
+        try:
+            return self.export_path(path if Path(path).suffix else path + ".json", "json", all_assets=True)
+        except (OSError, ValueError) as exc:
+            self.error("Could not save inventory", str(exc))
+            return False
+
+    def export_dialog(self):
+        choices = {"CSV spreadsheet (*.csv)": "csv", "JSON report (*.json)": "json", "HTML report (*.html)": "html"}
+        path, selected = QFileDialog.getSaveFileName(self, f"Export {self.proxy.rowCount():,} visible assets", str(Path(self.last_folder) / "discovr-report"), ";;".join(choices))
+        if path:
+            fmt = choices.get(selected, "csv")
+            try:
+                self.export_path(path if Path(path).suffix else path + "." + fmt, fmt)
+            except (OSError, ValueError) as exc:
+                self.error("Could not export report", str(exc))
+
+    def error(self, title, message):
+        box = QMessageBox(QMessageBox.Icon.Warning, title, message, QMessageBox.StandardButton.Ok, self)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.exec()
+
+    def clear_inventory(self):
+        if self.session.snapshot(self.version)["jobs"] and self.session.cancels:
+            self.error("Discovery is running", "Stop running scans before clearing the inventory.")
+            return
+        answer = QMessageBox.question(self, "Clear inventory", "Clear all assets from this session? Export anything you want to keep first.",
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if answer == QMessageBox.StandardButton.Yes:
+            self.session.clear()
+            self.refresh()
+
+    def show_help(self):
+        self.text_dialog("Using Discovr", "1. Choose a discovery source, enter its details, and select Start discovery.\n\n"
+                         "2. Results arrive in the inventory. Up to four scans can run together. Stop selected preserves assets already found. "
+                         "Double-click a scan to inspect warnings and incomplete results.\n\n"
+                         "3. Search or filter results. Double-click an asset to inspect every field.\n\n"
+                         "4. Export view saves filtered results as CSV, JSON or HTML. Save inventory saves every asset as JSON, regardless of filters. "
+                         "Import JSON merges a previous report into this session.\n\n"
+                         "5. Close the app before ejecting your USB drive. Results and credentials are kept in memory; save results you want to retain.\n\n"
+                         "Local discovery works offline. Cloud and AD require network access and authorised credentials. "
+                         "Risk and agent capability are triage estimates, not vulnerability verification. "
+                         "Neighbour-cache observation is passive and cannot establish current liveness.")
+
+    def show_licences(self):
+        path = Path(__file__).with_name("THIRD_PARTY_NOTICES.txt")
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            content = "Third-party notices are generated when building the USB app. See requirements.lock for exact dependency versions."
+        self.text_dialog("Third-party licences", content)
+
+    def about(self):
+        self.text_dialog("About Discovr", f"Discovr {__version__}\nPortable asset discovery\n\n"
+                         "Native desktop software for Windows, Linux and macOS.\n"
+                         "Python and Qt are bundled; no additional software is required.\n\n"
+                         "Qt / PySide6 are dynamically linked under LGPLv3. See Third-party licences for notices and source locations.")
+
+    def closeEvent(self, event):
+        if not self._allow_close:
+            if any(j["status"] == "running" for j in self.session.snapshot(self.version)["jobs"]):
+                answer = QMessageBox.question(self, "Stop discovery and quit?", "Running scans will stop. Only results already received can be saved.",
+                                              QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+                if answer != QMessageBox.StandardButton.Yes:
+                    event.ignore()
+                    return
+                self.session.stop_all()
+            snapshot = self.session.snapshot()
+            if snapshot["assets"] and snapshot["version"] != self.saved_version:
+                answer = QMessageBox.question(self, "Save inventory before closing?", "Save the complete inventory as a JSON report?",
+                                              QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                                              QMessageBox.StandardButton.Save)
+                if answer == QMessageBox.StandardButton.Cancel or (answer == QMessageBox.StandardButton.Save and not self.save_inventory()):
+                    event.ignore()
+                    return
+        self.session.stop_all()
+        for field in self.secret_fields:
+            field.clear()
+        self.timer.stop()
+        self.app_logger.removeHandler(self.log_handler)
+        self.app_logger.setLevel(self.previous_log_level)
+        self.log_handler.close()
+        event.accept()

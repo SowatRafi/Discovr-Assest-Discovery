@@ -1,6 +1,6 @@
-"""Discovr command line: headless scans for scripts and servers, or the web UI by default.
+"""Discovr command line: headless scans for scripts and servers, or the native desktop by default.
 
-    discovr                                   open the web interface (also on double-click)
+    discovr                                   open the native desktop (also on double-click)
     discovr --scan-network 10.0.0.0/24        active network sweep
     discovr --autoipaddr --intensity gentle   sweep the local subnet, gently
     discovr --ad --domain corp.local --username me@corp.local      (password is prompted)
@@ -50,16 +50,14 @@ def print_progress(done, total, stage):
 
 def build_parser() -> argparse.ArgumentParser:
     """All command-line options (legacy flags kept so existing scripts keep working)."""
-    parser = argparse.ArgumentParser(prog="discovr", description="Discovr - asset discovery for networks, "
-                                     "Active Directory and cloud. Run without options to open the web interface.")
+    parser = argparse.ArgumentParser(prog="discovr", allow_abbrev=False, description="Discovr - asset discovery for networks, "
+                                     "Active Directory and cloud. Run without options to open the native desktop.")
     parser.add_argument("--version", action="version", version=f"Discovr {__version__}")
     parser.add_argument("--diagnostics", action="store_true", help="check bundled features offline and print JSON")
     parser.add_argument("--licenses", action="store_true", help="print bundled third-party licence notices")
 
-    ui = parser.add_argument_group("web interface")
-    ui.add_argument("--ui", action="store_true", help="open the web interface (the default with no scan options)")
-    ui.add_argument("--port", type=int, default=0, help="web interface port (default: a random free port)")
-    ui.add_argument("--no-browser", action="store_true", help="do not open a browser automatically")
+    ui = parser.add_argument_group("native desktop")
+    ui.add_argument("--ui", action="store_true", help="open the native desktop (the default with no scan options)")
 
     net = parser.add_argument_group("network discovery (no admin rights needed)")
     net.add_argument("--scan-network", metavar="RANGE", help="CIDR, IP or comma-separated list, e.g. 192.168.1.0/24")
@@ -203,7 +201,7 @@ def run_scan(feature, args):
 
 
 def main(argv=None):
-    """Parse arguments, run a scan (or the web UI) and save the report."""
+    """Parse arguments, run a scan (or the native desktop) and save the report."""
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.licenses:
@@ -226,19 +224,12 @@ def main(argv=None):
         parser.error("select one discovery mode, or use --ui to run several scans")
     if args.autoipaddr and args.scan_network:
         parser.error("choose --autoipaddr or --scan-network, not both")
-    if not 0 <= args.port <= 65535:
-        parser.error("--port must be between 0 and 65535")
     if args.timeout <= 0:
         parser.error("--timeout must be a positive number of seconds")
     feature = selected_feature(args)
     if feature is None:
-        # No scan options (or --ui): the local web interface - also what a double-click starts.
-        from discovr.server import serve
-
-        try:
-            serve(port=args.port, open_browser=not args.no_browser)
-        except OSError as exc:
-            print(f"[!] Could not start the dashboard: {exc}", file=sys.stderr)
+        from discovr.desktop import main as desktop_main
+        if desktop_main([]):
             sys.exit(1)
         return
 

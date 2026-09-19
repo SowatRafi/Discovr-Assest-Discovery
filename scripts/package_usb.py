@@ -31,7 +31,7 @@ def main():
                 plistlib.dump({"CFBundleName": "Discovr", "CFBundleExecutable": "Discovr",
                                "CFBundleIdentifier": "org.discovr.desktop", "CFBundlePackageType": "APPL",
                                "CFBundleShortVersionString": "2.1.0", "CFBundleVersion": "2.1.0",
-                               "LSUIElement": True, "NSHighResolutionCapable": True,
+                               "LSUIElement": False, "NSHighResolutionCapable": True,
                                "LSMinimumSystemVersion": "14.0" if platform.machine() == "arm64" else "15.0"},
                               output_plist)
             subprocess.run(["/usr/bin/clang", "-fobjc-arc", "-framework", "Cocoa",

@@ -24,6 +24,10 @@ def collect_notices(root):
     python_license = Path(sys.base_prefix) / "LICENSE.txt"
     if python_license.is_file():
         sections.append("\nPython runtime\n" + python_license.read_text(encoding="utf-8", errors="replace"))
+    # The PySide wheel carries commercial terms only. Ship the open-source terms
+    # and Qt's own component attributions alongside our LGPL dynamic-link notice.
+    for path in sorted((root / "docs/licenses").glob("*.txt")):
+        sections.append(f"\n--- {path.name} ---\n{path.read_text(encoding='utf-8')}\n")
     output = root / "build" / "THIRD_PARTY_NOTICES.txt"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(sections), encoding="utf-8")

@@ -1,12 +1,13 @@
 # Discovr runtime dependencies.
 # Kept deliberately small: every package here ends up inside the portable
-# binary, and a smaller bundle unpacks (and therefore starts) faster.
+# folder, so unused GUI modules and cloud service models are excluded at build time.
 # Heavy cloud SDKs (azure-mgmt-*, google-cloud-compute + gRPC) were replaced
 # by plain REST calls, and optional features are imported lazily at runtime.
 
 # --- Core --------------------------------------------------------------------
 psutil>=5.9          # interface + subnet detection (replaces unmaintained netifaces)
 tabulate>=0.9        # CLI result tables
+PySide6-Essentials==6.11.2  # native Qt Widgets; no browser, web engine or webview
 
 # --- Active Directory ----------------------------------------------------------
 ldap3>=2.9.1

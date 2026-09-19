@@ -9,7 +9,7 @@ import pytest
 from discovr.core import enrich, merge_assets
 from discovr.lookup import lookup_many
 from discovr.scan import ScanCancelled, ScanControl
-from discovr.server import Session, build_scanner
+from discovr.session import Session, build_scanner
 
 
 def test_cloud_private_ip_collisions_do_not_hide_machines():
@@ -105,7 +105,7 @@ def test_all_provider_jobs_can_stop_and_keep_partial_results(monkeypatch):
             assert cancel.wait(2)
             ScanControl(cancel=cancel).check()
 
-    monkeypatch.setattr("discovr.server.build_scanner", lambda *args: (Scanner(), "Directory"))
+    monkeypatch.setattr("discovr.session.build_scanner", lambda *args: (Scanner(), "Directory"))
     session = Session()
     job = session.start("ad", {})
     assert ready.wait(2)
@@ -123,7 +123,7 @@ def test_partial_scan_is_distinguished_from_success_and_secrets_are_released(mon
             return [{"IP": "10.0.0.1"}]
 
     scanner = Scanner()
-    monkeypatch.setattr("discovr.server.build_scanner", lambda *args: (scanner, "Cloud"))
+    monkeypatch.setattr("discovr.session.build_scanner", lambda *args: (scanner, "Cloud"))
     session = Session()
     result = wait_finished(session, session.start("aws", {}))
     assert result["status"] == "partial" and result["warnings"] == scanner.warnings
@@ -147,7 +147,7 @@ def test_cloud_credentials_are_accepted_without_cli():
 
 
 def test_clear_rejected_while_scan_can_still_emit():
-    from discovr.server import BadRequest
+    from discovr.session import BadRequest
     session = Session()
     session.cancels["running"] = threading.Event()
     with pytest.raises(BadRequest, match="Stop running"):
@@ -162,7 +162,7 @@ def test_job_count_uses_stable_inventory_identity_when_ip_is_learned(monkeypatch
             on_asset(asset)
             return [asset]
 
-    monkeypatch.setattr("discovr.server.build_scanner", lambda *args: (Scanner(), "Directory"))
+    monkeypatch.setattr("discovr.session.build_scanner", lambda *args: (Scanner(), "Directory"))
     session = Session()
     job = wait_finished(session, session.start("ad", {}))
     assert job["found"] == len(session.inventory) == 1

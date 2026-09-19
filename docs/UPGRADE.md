@@ -19,6 +19,18 @@ USB startup cannot be literally instantaneous: device speed and operating-system
 still matter. First-run security approval and Linux USB execution permissions are controlled
 by the host. The application cannot bypass them. See [USB instructions](USB-START.txt).
 
+## Native desktop packaging
+
+Qt Widgets, its platform plugins and Python are bundled in place. Only PySide6 Essentials
+is used; Qt WebEngine, WebView, QML and Quick are excluded. The historical web server remains
+in the source tree for compatibility tests, but is excluded from USB builds and normal startup.
+Linux bundles discovered desktop support libraries; a standard glibc/X11 or Wayland desktop
+with permission to execute from the drive is required. Builds use Ubuntu 22.04 as the baseline.
+Windows and macOS are tested using their native platform plugins.
+
+When updating Qt, run `python scripts/update_qt_notices.py` and review the generated notices.
+The runtime remains dynamically linked; source and replacement instructions accompany releases.
+
 ## Behaviour changes
 
 - Cloud identities are scoped by provider and resource identity, avoiding collisions on
@@ -31,8 +43,9 @@ by the host. The application cannot bypass them. See [USB instructions](USB-STAR
   cannot hold the application open. SSH banner concurrency is bounded too.
 - nmap, raw packet capture and Scapy are removed. Every exposed mode works without installing tools.
 - Passive discovery watches the OS neighbour cache. Windows uses its built-in ARP reader without flashing a console.
-- The dashboard Quit button stops the process before the USB drive is ejected.
-- AWS/Azure credentials can be supplied through the dashboard without installing provider CLIs.
+- A native Qt Widgets window replaces browser startup. No HTTP listener or webview is included in the USB app.
+- Closing the window stops the process and offers to save unsaved inventory. Save inventory includes filtered-out assets.
+- AWS/Azure credentials can be supplied through native desktop fields without installing provider CLIs.
 - Invalid API payloads fail before modifying inventory. API connections and scan history are bounded.
 - Runtime dependencies are pinned with hashes and audited. Platform builds exercise the packaged
   application after relocation and with an empty PATH.

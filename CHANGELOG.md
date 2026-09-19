@@ -2,11 +2,14 @@
 
 ## 2.1.0 (unreleased)
 
-- Ship USB app folders with a Windows GUI launcher, a macOS app bundle, and a dashboard Quit button.
+- Replace browser startup with a native Qt Widgets desktop on Windows, Linux and macOS.
+- Preserve all six discovery sources, live inventory, filtering, scan warnings and cancellation.
+- Add native import/export dialogs, atomic report writes and unsaved-inventory protection on close.
+- Ship self-contained USB folders and macOS app bundles without a webview or HTTP listener.
 - Remove nmap integration, raw capture and Scapy; no optional install requirements remain.
 - Load the runtime in place on every OS, with a native macOS launcher; gate startup time in CI.
 
-- Add driver-free passive neighbour-cache observation and dashboard AWS/Azure credentials.
+- Add driver-free passive neighbour-cache observation and native AWS/Azure credential fields.
 - Keep overlapping cloud private addresses separate using provider resource identities.
 - Preserve full DNS names and avoid ambiguous hostname merges.
 - Correct cloud VM classification and refresh changing inventory fields on repeat scans.

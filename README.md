@@ -2,12 +2,12 @@
 
 **Portable asset discovery for security-tool rollouts.** Build an inventory of machines that may need to be
 running your security agent - on the network, in Active Directory and in AWS, Azure and GCP -
-from a USB-ready app with a local web dashboard. No installer, no agents, no internet
+from a USB-ready app with a native desktop window. No installer, no agents, no internet
 connection needed for local discovery. Cloud discovery requires access to the provider's APIs.
 
 [![build](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml/badge.svg?branch=Rejuvinate-Discovr)](https://github.com/SowatRafi/Discovr-Assest-Discovery/actions/workflows/build.yml)
 
-![Discovr dashboard](docs/screenshot.png)
+![Discovr native desktop](docs/screenshot.png)
 
 ## Why Discovr
 
@@ -19,7 +19,7 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 ## Highlights
 
 - **USB-ready, three operating systems** - self-contained app folders for Windows x64, macOS (Apple
-  silicon and Intel), and Linux x64. Python is bundled; users do not install it.
+  silicon and Intel), and Linux x64. Python and Qt are bundled; users do not install them.
 - **Fast, unprivileged network sweep** - an asyncio TCP engine needs no nmap, admin rights or
   Npcap; an ARP-cache pass also finds firewalled hosts on the local segment. Gentle / normal /
   aggressive profiles protect sensitive networks.
@@ -28,9 +28,9 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 - **Answers the rollout question** - every asset gets a type (Workstation, Server, Printer,
   IoT, ...), an **Agent-capable** flag and a triage **risk** rating. Cloud VMs show whether the
   AWS SSM or Azure VM agent is reporting, i.e. whether an agent can be pushed remotely.
-- **Local web dashboard** - filters, search, detail view, CSV / JSON / HTML export and JSON
+- **Native desktop interface** - filters, search, detail view, CSV / JSON / HTML export and JSON
   import. Works fully offline.
-- **Secure by default** - the UI listens on 127.0.0.1 only, behind a per-launch token; AD
+- **Secure by default** - the desktop has no HTTP listener or browser session; AD
   passwords are only sent over verified TLS (else NTLM); cloud credentials are supplied at runtime
   and stay in memory; reports neutralise CSV and HTML injection. See [SECURITY.md](SECURITY.md).
 
@@ -41,9 +41,9 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 1. Download the matching **discovr-usb** archive from [Releases](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases).
    Extract it once using your file manager and copy the **whole Discovr folder/app** to your USB drive.
 2. Plug in the drive and double-click **Discovr.exe** on Windows, **Discovr.app** on macOS,
-   or **Discovr** on Linux. Your existing default browser opens the dashboard automatically.
+   or **Discovr** on Linux. Discovr opens its own desktop window.
 3. Choose a discovery source and click **Start**. Export results you want to keep, then click
-   **Quit** before ejecting the USB drive. Closing a browser tab alone does not stop the app.
+   **Quit** or close the window before ejecting the USB drive. The app offers to save unsaved inventory.
 
 | System | Download |
 | --- | --- |
@@ -64,7 +64,7 @@ the drive must allow application execution. Discovr cannot bypass a machine's se
 No terminal commands are needed for normal use. Check downloads against `SHA256SUMS.txt`.
 
 Builds run on Windows, Ubuntu 22.04, macOS 14 (Apple silicon) and macOS 15 (Intel).
-AD and cloud discovery need authorised credentials; enter them in the dashboard. Passive
+AD and cloud discovery need authorised credentials; enter them in the app. Passive
 observation reads the OS neighbour cache and sends no packets. Raw packet capture is not included.
 
 ### Developer setup from source (Python 3.13)
@@ -75,29 +75,29 @@ cd Discovr-Assest-Discovery
 python -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install --require-hashes -r requirements.lock
-python -m discovr                    # web dashboard
+python -m discovr                    # native desktop
 python -m discovr --help             # command line
 ```
 
-## Web dashboard
+## Native desktop
 
-Double-clicking the app opens an authorised dashboard. Its per-launch access token stays
-private; do not share the browser session. No terminal window is needed on Windows or macOS.
+Double-clicking opens a Qt Widgets application with native menus, controls and file dialogs.
+It does not run a browser, embedded webview or local web server.
 
-- **New scan** (left) - pick a source, fill in the few fields it needs and start. Several scans
-  can run at once; each shows live progress, the number of assets found and a *Stop* button.
-- **Incomplete** means that a region, subscription or optional metadata could not be read.
-  Review the warnings on that scan card. Missing firewall data is labelled **Unknown**.
-  Stop preserves discovered assets; a cloud/directory request already in flight finishes
-  before cancellation takes effect. Authentication may also take time to return.
-- **Filters** (top) - search any field (`/` jumps to the search box), filter by risk, device
-  type, source or agent capability. Tiles, breakdowns and the table always agree with the filters.
-- **Risk breakdown / Device types** - click a row to filter by it.
-- **Assets** - sortable table; select a hostname for every field Discovr knows about it.
-- **Export** - CSV, JSON (re-importable) or a self-contained HTML report of the *filtered* view.
-  **Import JSON** merges reports from other runs, e.g. a headless scan from a jump box.
+- **New discovery** — choose Network, Neighbour cache, Active Directory, AWS, Azure or GCP.
+  Start up to four scans together. The Scans tab shows progress and supports Stop selected / Stop all.
+- **Scan details** — double-click a scan to read errors and coverage warnings. Incomplete means
+  some regions, subscriptions or optional metadata could not be read. Cancellation preserves
+  collected assets; requests already in flight may take time to finish.
+- **Inventory** — search all fields and filter by risk, device type, source or agent capability.
+  Sort columns and double-click an asset to inspect all provider fields.
+- **Save inventory** — save every asset as a re-importable JSON report, regardless of filters.
+- **Export view** — save the visible results as CSV, JSON or HTML using a normal file dialog.
+- **Import JSON** — merge previous Discovr reports into the current session.
+- **Close / Quit** — stop discovery and offer to save unsaved inventory before exiting.
 
-Use **Quit** in the top bar to stop the application and all running scans.
+Risk, device type, agent capability and network OS are estimates from observed evidence.
+Unknown cloud exposure is never a guarantee of isolation.
 
 ## Developer CLI (optional)
 
@@ -120,7 +120,7 @@ discovr --scan-network 10.0.0.0/24 --save yes --format all --out ./reports
 
 | Option | Purpose |
 |---|---|
-| *(none)*, `--ui`, `--port`, `--no-browser` | Web dashboard |
+| *(none)*, `--ui` | Native desktop |
 | `--scan-network RANGE`, `--autoipaddr` | Active network sweep of a CIDR / IP / list (up to a /16), or of the local subnet |
 | `--ports`, `--intensity`, `--parallel` | Port list, load profile, probes in flight |
 | `--ad --domain --username [--dc] [--ldaps] [--ca-file]` | Active Directory computers (password: prompt, or `DISCOVR_AD_PASSWORD`) |
@@ -185,7 +185,7 @@ These are potential exposures, not connectivity tests: routing, NAT, load balanc
 deny rules, priorities and higher-level policies are not fully evaluated. Inspect
 **ExposureAssessment** alongside the result. An empty finding does not prove isolation.
 
-The dashboard credential fields avoid installing AWS/Azure command-line tools. Leave them
+The desktop credential fields avoid installing AWS/Azure command-line tools. Leave them
 blank to use an existing provider login. Prefer temporary AWS credentials and an Azure
 application granted Reader access. Credential fields are cleared after starting a scan;
 credentials are not written to reports. Azure currently targets the public Azure cloud.
@@ -214,10 +214,11 @@ Keep inventories from unrelated on-premises networks separate when their address
 
 ## Reports
 
-Use the dashboard Export menu to download CSV, JSON or HTML reports through your browser.
+Use **Export view** to save CSV, JSON or HTML reports through a native file dialog.
+Use **Save inventory** to preserve every asset as JSON, including filtered-out rows.
 The optional source CLI saves to `Documents/discovr_reports/{csv,json,html}` (or `--out DIR`)
 and writes a log to `.../logs`. Each field any source reported becomes a column.
-JSON reports can be re-imported into the dashboard.
+JSON reports can be re-imported into the desktop.
 
 ## Building and development
 
@@ -226,7 +227,7 @@ pip install --require-hashes -r requirements.lock
 pip install -r requirements-dev.txt
 python -m pytest -q                          # unit + integration tests (no network needed)
 python scripts/rebuild_macos_crypto.py       # Intel macOS: static OpenSSL; no-op elsewhere
-pyinstaller --noconfirm discovr.spec         # -> dist/Discovr (macOS: dist/Discovr.app)
+pyinstaller --noconfirm discovr.spec         # -> dist/Discovr (all platforms)
 python scripts/package_usb.py dist/discovr-usb-windows-x64.zip
 python scripts/smoke_usb.py dist/discovr-usb-windows-x64.zip
 # Use the matching archive name above for macOS/Linux.
@@ -235,19 +236,21 @@ docker build -t discovr .                    # CLI in a container
 
 GitHub Actions (`.github/workflows/build.yml`) tests on Windows, macOS and Linux, audits
 the locked dependencies with `pip-audit`, and builds four USB archives. Each archive is
-extracted outside the repository to a path with spaces and tested with an empty PATH: provider diagnostics, dashboard,
-loopback scan, export/import and shutdown. A `v*` tag prepares a **draft** release with SHA-256
+extracted outside the repository to a path with spaces and tested with an empty PATH: provider diagnostics, real native widgets,
+loopback scan, cancellation, filtering, export/import and window shutdown. Linux GUI acceptance
+runs against Xvfb with the xcb desktop plugin; Windows and macOS use their own platform plugins. A `v*` tag prepares a **draft** release with SHA-256
 checksums for maintainer review. No public release is published automatically.
 
 See [upgrade notes](docs/UPGRADE.md) for design decisions, validation and remaining release gates.
 
 ```
 discovr/
-  desktop.py    double-click launcher; cli.py developer CLI      server.py  local web server + REST API
+  desktop.py    double-click launcher              cli.py     optional developer CLI
+  native.py     Qt Widgets desktop                 session.py discovery/session controller
   network.py    async TCP sweep engine              passive.py neighbour-cache observation
   active_directory.py  LDAP                         aws.py / azure.py / gcp.py  cloud providers
   core.py       merge, export, reporting            tagger.py / risk.py  classification
-  ui/           dashboard (HTML/CSS/JS, no build step)
+  server.py / ui/   historical web interface (excluded from USB builds and normal startup)
 ```
 
 ## Responsible use
@@ -258,6 +261,6 @@ the network owner first, and prefer `--intensity gentle` or passive mode on frag
 
 ## License
 
-[MIT](LICENSE). Bundled third-party libraries retain their own licences, including ldap3
-under LGPL-3.0. Every USB folder includes `THIRD_PARTY_NOTICES.txt` with exact package versions
+[MIT](LICENSE). Bundled third-party libraries retain their own licences, including Qt, PySide6 and ldap3
+under LGPL-3.0. Qt remains dynamically linked and replaceable; see [Qt source and replacement notes](docs/licenses/Qt-SOURCES.txt). Every USB folder includes `THIRD_PARTY_NOTICES.txt` with exact package versions
 and upstream source links.

@@ -1,5 +1,5 @@
 # Discovr container image (CLI mode).
-# The web UI binds to 127.0.0.1 by design, so inside a container use the CLI flags, e.g.
+# The native desktop needs a display; use headless CLI flags in the container, e.g.
 #   docker run --rm -v "$PWD/reports:/reports" discovr --scan-network 10.0.0.0/24 --save yes --out /reports
 FROM python:3.13-slim
 

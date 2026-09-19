@@ -44,10 +44,12 @@ def check_runtime():
         PassiveDiscovery(timeout=1)
 
     def ui():
-        from discovr.server import STATIC, UI_DIR
-        for name, _ in STATIC.values():
-            if not (UI_DIR / name).read_bytes():
-                raise RuntimeError(f"Empty UI asset: {name}")
+        from PySide6.QtCore import QLibraryInfo
+        from PySide6.QtWidgets import QMainWindow
+        from pathlib import Path
+        plugins = Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath)) / "platforms"
+        if not plugins.is_dir() or not any(plugins.iterdir()):
+            raise RuntimeError("Native desktop platform plugins are missing")
 
     for name, fn in (("aws", aws), ("azure", azure), ("gcp", gcp), ("ad", directory), ("passive", passive), ("ui", ui)):
         check(name, fn)
