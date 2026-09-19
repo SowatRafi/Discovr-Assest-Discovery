@@ -32,8 +32,10 @@ Expected sample results: **10 assets**, **6 agent capable**, **4 high/critical**
 
 ## Discover your network
 
-1. Select **Network**, then **Use local subnet**. Review the range before starting. You can
-   enter one IPv4 address, a CIDR such as `10.20.0.0/24`, or a comma-separated list.
+1. On startup, **This computer · local IPv4** shows your local IP and connection (Wi-Fi,
+   Ethernet or VPN). Discovr prepares the subnet selected by the operating system; choose
+   another connection if needed. Review the **Target range** before starting. You can enter
+   one IPv4 address, a CIDR such as `10.20.0.0/24`, or a comma-separated list.
 2. Keep **Standard** for richer device details, or choose **Quick** for ten common ports
    without extended port probes or service identification. Both resolve names when available.
 3. Optionally enter an **Environment label**, such as a client name or “Production”.
@@ -43,8 +45,15 @@ Expected sample results: **10 assets**, **6 agent capable**, **4 high/critical**
 6. The Scans panel shows progress, elapsed time, asset count and warnings. **Stop selected**
    keeps results already found. Up to four discoveries can run together.
 
-The default-route subnet may be a VPN or only one of several interfaces. Review it; Discovr
-does not know every remote VLAN. Unknown OS/hostname fields are legitimate results.
+Use **Use local subnet** to refresh after connecting to a different network. Detection reads
+local OS information, needs no internet service, and does not start a scan. A target entered
+while detection runs is preserved. If no default route exists, a single active connection is
+selected; multiple connections require your choice. If the netmask is unavailable, the target
+contains only your own IP (`/32`). With no active IPv4 connection, you can still enter a target.
+
+These are local IPv4 addresses, not a public internet IP lookup. The default-route subnet may
+be a VPN or only one of several interfaces. Discovr does not know every remote VLAN.
+Unknown OS/hostname fields are legitimate results.
 `SeenVia` distinguishes a TCP response from possibly stale neighbour-cache evidence.
 
 ### Get more detail for a device

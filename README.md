@@ -42,25 +42,27 @@ one question quickly, in an unfamiliar environment, with minimal setup:
 
 ### USB app: no installer or commands
 
-1. Download the matching **discovr-usb** archive from the [2.1.0 RC2 release](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/tag/v2.1.0-rc.2).
+1. Download the matching **discovr-usb** archive from the [2.1.0 RC3 release](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/tag/v2.1.0-rc.3).
    Extract it once using your file manager and copy the **whole Discovr folder/app** to your USB drive.
 2. Plug in the drive and double-click **Discovr.exe** on Windows, **Discovr.app** on macOS,
    or **Discovr** on Linux. Discovr opens its own desktop window.
-3. Choose a discovery source and click **Start**. Export results you want to keep, then click
+3. Your local IPv4 address and connection appear automatically, with its subnet prepared.
+   Choose a different connection or edit the range if needed, then click **Start discovery**.
+   You can also choose Active Directory or a cloud source. Export results you want to keep, then click
    **Quit** or close the window before ejecting the USB drive. The app offers to save unsaved inventory.
 
 | System | Download |
 | --- | --- |
-| Windows x64 | [USB folder ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.2/discovr-usb-windows-x64.zip) |
-| Linux x64 | [USB folder TAR.GZ](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.2/discovr-usb-linux-x64.tar.gz) |
-| macOS Apple silicon | [App ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.2/discovr-usb-macos-arm64.zip) |
-| macOS Intel | [App ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.2/discovr-usb-macos-x64.zip) |
+| Windows x64 | [USB folder ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.3/discovr-usb-windows-x64.zip) |
+| Linux x64 | [USB folder TAR.GZ](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.3/discovr-usb-linux-x64.tar.gz) |
+| macOS Apple silicon | [App ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.3/discovr-usb-macos-arm64.zip) |
+| macOS Intel | [App ZIP](https://github.com/SowatRafi/Discovr-Assest-Discovery/releases/download/v2.1.0-rc.3/discovr-usb-macos-x64.zip) |
 
 Prefer one file? Optional `discovr-single-windows-x64.exe` and `discovr-single-linux-x64`
 builds contain the same features. They unpack into temporary storage on each launch and
 start more slowly. The USB folder is recommended for speed. macOS already presents one `.app` item.
 
-RC2 is a prerelease. The release page includes build provenance and SHA-256 checksums for
+RC3 is a prerelease. The release page includes build provenance and SHA-256 checksums for
 all six downloads; publisher signing and live customer cloud/domain acceptance remain pending.
 
 **First time?** Follow the [illustrated usage and demo guide](docs/USER_GUIDE.md), or open
@@ -95,6 +97,9 @@ python -m discovr                    # native desktop
 ## Native desktop
 
 Double-clicking opens a Qt Widgets application with native menus, controls and file dialogs.
+Startup reads the computer's local IPv4 connections in the background. It displays the OS-selected
+connection and prepares its subnet without starting a scan or overwriting a target you type.
+Use the connection selector for another Wi-Fi/Ethernet/VPN address, or **Use local subnet** to refresh.
 Discovr is desktop-only: there are no scan commands, terminal prompts or headless modes.
 Use **Help → Explore sample inventory** for the demo and **Import report** to open saved results.
 It does not run a browser or embedded webview. No listener starts unless you explicitly enable the local API.

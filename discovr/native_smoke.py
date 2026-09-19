@@ -48,6 +48,15 @@ def exercise(window, result_file):
         notices = Path(discovr.__file__).with_name("THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8")
         require("boto3" in notices.lower(), "Bundled third-party notices are missing")
         result["checks"].append("provider-diagnostics-and-licences")
+        wait_until(lambda: not window._detecting_network)
+        require(not window.session.jobs and not window.session.inventory, "Startup detection started a scan")
+        connection = window.local_connection.currentData()
+        if connection:
+            require(connection["ip"] in window.local_connection.currentText(), "Local IP is not displayed")
+            require(window.fields["network"]["target"].text() == connection["subnet"], "Local subnet was not prepared")
+        else:
+            require(not window.fields["network"]["target"].text(), "An offline/ambiguous host invented a target")
+        result["checks"].append("startup-local-ip-without-scanning")
         window.fields["network"]["target"].setText("invalid target")
         QTest.mouseClick(window.start_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: not window._preparing)

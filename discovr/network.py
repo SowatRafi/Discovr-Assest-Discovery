@@ -109,17 +109,59 @@ def primary_ip() -> str:
         return sock.getsockname()[0]
 
 
-def local_subnet() -> str:
-    """CIDR of the interface carrying the default route, e.g. "192.168.1.0/24"."""
-    import psutil  # lazy: only needed for auto-detection
+def local_network_info() -> dict:
+    """Read active IPv4 connections locally; never scan or contact an IP service.
 
-    ip = primary_ip()
-    for addresses in psutil.net_if_addrs().values():
-        for addr in addresses:
-            if addr.family == socket.AF_INET and addr.address == ip and addr.netmask:
-                return str(ipaddress.IPv4Network(f"{ip}/{addr.netmask}", strict=False))
-    # Fall back to a /24 when the OS hides the netmask; the user can edit the range.
-    return str(ipaddress.IPv4Network(f"{ip}/24", strict=False))
+    The OS route selects the usual connection. Without a route, a single active
+    connection is usable on an isolated LAN; multiple connections need a choice.
+    """
+    import psutil
+
+    try:
+        routed_ip = primary_ip()
+    except OSError:
+        routed_ip = None
+    addresses = psutil.net_if_addrs()
+    try:
+        stats = psutil.net_if_stats()
+    except (OSError, psutil.Error):
+        stats = {}  # Some hosts permit address reads but restrict interface status.
+    connections, seen = [], set()
+    for name, entries in addresses.items():
+        if name in stats and not stats[name].isup:
+            continue
+        for addr in entries:
+            if addr.family != socket.AF_INET:
+                continue
+            try:
+                ip = ipaddress.IPv4Address(addr.address)
+            except ValueError:
+                continue
+            if ip.is_loopback or ip.is_unspecified or ip.is_multicast or int(ip) == 0xffffffff:
+                continue
+            if (name, str(ip)) in seen:
+                continue
+            seen.add((name, str(ip)))
+            try:
+                subnet = str(ipaddress.IPv4Network(f"{ip}/{addr.netmask}", strict=False))
+                netmask_known = True
+            except ValueError:
+                # A hidden/invalid mask must not invent a larger scan scope.
+                subnet, netmask_known = f"{ip}/32", False
+            connections.append({"ip": str(ip), "interface": name, "subnet": subnet,
+                                "netmask_known": netmask_known, "default": str(ip) == routed_ip})
+    connections.sort(key=lambda item: (not item["default"], item["interface"].casefold(), _ip_key(item["ip"])))
+    defaults = [index for index, item in enumerate(connections) if item["default"]]
+    selected = defaults[0] if len(defaults) == 1 else 0 if len(connections) == 1 else None
+    return {"connections": connections, "selected": selected}
+
+
+def local_subnet() -> str:
+    """Actual local CIDR, or a host-only /32 when the OS hides the netmask."""
+    info = local_network_info()
+    if info["selected"] is None:
+        raise OSError("No single local connection selected; choose a connection or enter a target range")
+    return info["connections"][info["selected"]]["subnet"]
 
 
 def parse_arp_table(text) -> dict:

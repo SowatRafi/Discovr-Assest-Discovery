@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.0-rc.3 (2026-09-19)
+
+- Detect and display this computer's local IPv4 address and connection at startup; prepare
+  the OS-selected subnet and offer a choice of Wi-Fi, Ethernet or VPN connections.
+- Read interfaces in the background without internet or automatic scanning; preserve manual
+  targets, handle offline/ambiguous connections, and use host-only scope if the netmask is hidden.
+
 ## 2.1.0-rc.2 (2026-09-19)
 
 - Make both source and portable launches desktop-only; remove all app command-line modes and flags.
