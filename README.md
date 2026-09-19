@@ -67,6 +67,8 @@ all six downloads; publisher signing and live customer cloud/domain acceptance r
 
 **First time?** Follow the [illustrated usage and demo guide](docs/USER_GUIDE.md), or open
 **Help → Explore sample inventory** inside the app. Sample exports are clearly marked `Demo`.
+Preview the fictional [CSV](docs/demo/demo.csv), [JSON](docs/demo/demo.json) or
+[HTML report](docs/demo/demo.html) to see each output format.
 
 Everything Discovr needs is bundled. No Python, nmap, packet-capture driver or provider CLI
 needs installing. Keep the runtime files next to the launcher. The app loads them directly
@@ -241,6 +243,14 @@ checksums for maintainer review. No public release is published automatically.
 
 Use feature branches and pull requests. Keep customer inventories, credentials and local
 tooling out of Git; use the maintainer's identity without automated co-author trailers.
+Delete merged branches and superseded release downloads/tags after verifying their replacement.
+Keep merged/closed PRs, commit history and CI logs as the review record. Intermediate CI
+packages expire after seven days; published release packages are retained until superseded.
+
+The dependency files have separate roles: `requirements.txt` declares direct runtime inputs,
+`requirements.lock` pins all runtime versions and hashes, and `requirements-dev.txt` lists
+test/build tools. Install the lock first, then development tools. Keeping them separate avoids
+shipping build tools or re-resolving the verified runtime during developer setup.
 
 When changing dependencies, regenerate the hash lock with Python 3.13 and pip-tools,
 review the diff, then run the tests, audit and all platform packaging checks:
@@ -259,8 +269,34 @@ Before a signed general release, validate real AD paging/CA trust and cloud VM c
 authorised accounts, test the intended USB drives and OS policies, and sign/notarise the
 binaries with the owner's signing identities. Fixture tests do not establish live tenant access.
 
-See [requirements coverage](docs/REQUIREMENTS.md) and
-[performance/demo evidence](docs/DEMO_RESULTS.md) for scope, decisions, measurements and remaining release gates.
+See [requirements coverage](docs/REQUIREMENTS.md) for scope, limits and remaining release gates.
+
+### Validation and performance
+
+The packaged checks above also exercise full-inventory saving, demo isolation/CIDR filtering,
+the opt-in API and temporary-runtime cleanup for single files. Active test traffic targets
+only the test's own loopback listener. CI startup ceilings are 15 seconds for folders and
+45 seconds for single files; these are failure guards, not advertised expected speeds.
+Platform logs record measurements for the exact tested commit.
+
+The following local measurements were recorded on 19 September 2026 using discovery code
+at `da64dcd`, Windows 11, Python 3.13.14 and an SSD. [Raw results](docs/demo/measurements.json)
+are retained so the figures remain traceable.
+
+| Measurement | Result |
+| --- | --- |
+| First result from a real loopback TCP listener | 165.49 ms |
+| Complete one-host, one-port scan, including DNS/cache work | 212.15 ms |
+| Correctly detected the listener's open TCP port | Yes |
+| Merge, display and paint 10,000 synthetic rows | 1,002.37 ms |
+| Filter those rows to one hostname and paint | 11.16 ms |
+
+Reproduce with `python scripts/demo_results.py tmp/demo-results`. The benchmark includes
+initial ingestion; ordinary file import uses a background worker. Filtering excludes the
+120 ms search debounce. These observations describe one run, not a network-wide speed promise:
+range size, timeouts, DNS, firewalls, provider latency, USB media and antivirus affect results.
+
+### Source layout
 
 ```
 discovr/

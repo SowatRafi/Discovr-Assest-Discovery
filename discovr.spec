@@ -1,7 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller recipe for the ready-to-run USB folder and macOS app bundle.
 
-Build:   pip install -r requirements-dev.txt
+Build:   pip install --require-hashes -r requirements.lock
+         pip install -r requirements-dev.txt
          pyinstaller --noconfirm discovr.spec      ->  dist/Discovr (all platforms)
 
 Notes
