@@ -207,8 +207,9 @@ class AzureDiscovery:
         try:
             return credential.get_token(f"{ARM}/.default").token
         except ClientAuthenticationError as exc:
-            raise RuntimeError("No usable Azure credentials - run `az login`, or set AZURE_TENANT_ID, "
-                               f"AZURE_CLIENT_ID and AZURE_CLIENT_SECRET ({str(exc).splitlines()[0]})")
+            raise RuntimeError("Azure authentication failed. Enter a valid Tenant ID, Application / client ID "
+                               "and Client secret in the Azure form. Check the secret's expiry and the application's "
+                               "Reader access to the subscription.") from exc
         finally:
             if self.credential is None:
                 credential.close()

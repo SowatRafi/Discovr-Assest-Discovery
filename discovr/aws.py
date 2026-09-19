@@ -123,7 +123,8 @@ class AWSDiscovery:
                 connect_timeout=5, read_timeout=15, retries={"mode": "standard", "total_max_attempts": 2}))
             return session
         except ProfileNotFound:
-            raise RuntimeError(f"AWS profile '{self.profile}' not found - run `aws configure --profile {self.profile}`")
+            raise RuntimeError(f"AWS profile '{self.profile}' was not found. Choose an existing profile, "
+                               "or clear Profile and enter an access key and secret in the AWS form.")
 
     def _regions(self, session):
         """The requested region, or every enabled region (falls back to the default one)."""
@@ -181,7 +182,8 @@ class AWSDiscovery:
             account = session.client("sts", region_name=session.region_name or "us-east-1") \
                 .get_caller_identity()["Account"]
         except NoCredentialsError:
-            raise RuntimeError("No AWS credentials found - run `aws configure` or `aws sso login`, or set AWS_PROFILE")
+            raise RuntimeError("No AWS credentials found. Enter an access key and secret in the AWS form, "
+                               "including a session token for temporary credentials, or choose an existing profile.")
         except (ClientError, BotoCoreError) as exc:
             raise RuntimeError(f"AWS authentication failed: {exc}")
 

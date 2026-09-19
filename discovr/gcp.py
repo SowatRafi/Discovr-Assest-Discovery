@@ -178,8 +178,9 @@ class GCPDiscovery:
                 creds, default_project = google.auth.default(scopes=SCOPES)
             creds.refresh(Request())  # fail fast with a clear message instead of on the first list call
         except (DefaultCredentialsError, FileNotFoundError, ValueError) as exc:
-            raise RuntimeError("No usable GCP credentials - run `gcloud auth application-default login` "
-                               f"or pass --gcp-credentials key.json ({exc})")
+            raise RuntimeError("No usable GCP credentials. Choose a valid service-account JSON key in the "
+                               "Google Cloud form, or use existing application-default credentials. "
+                               "The account needs Compute Viewer access.") from exc
         except RefreshError as exc:
             raise RuntimeError(f"GCP authentication failed: {exc}")
         return AuthorizedSession(creds), default_project
