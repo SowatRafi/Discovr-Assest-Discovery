@@ -36,6 +36,9 @@ jobs:
           cache-dependency-path: requirements.lock
       - run: python -m pip install --require-hashes -r requirements.lock
       - run: python -m pip install pytest==9.1.1
+      - name: Linux test display libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0
       - run: python -m pytest -q
 
   audit:
@@ -83,7 +86,7 @@ jobs:
       - name: Native Linux desktop build dependencies
         if: runner.os == 'Linux'
         # These libraries are collected into the USB folder; users install nothing.
-        run: sudo apt-get update && sudo apt-get install -y libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxkbcommon-x11-0 xvfb
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxkbcommon-x11-0 xvfb
       - name: Statically link Intel macOS cryptography
         if: matrix.asset == 'discovr-usb-macos-x64.zip'
         run: python scripts/rebuild_macos_crypto.py
